@@ -1,0 +1,13 @@
+{
+  "version": "0",
+  "id": "11111111-2222-3333-4444-555555555555",
+  "detail-type": "Scheduled Event",
+  "source": "aws.events",
+  "account": "123456789012",
+  "time": "2026-05-07T09:00:00Z",
+  "region": "us-east-1",
+  "resources": [
+    "arn:aws:events:us-east-1:123456789012:rule/ssm-patch-reboot-requests-discovery-schedule"
+  ],
+  "detail": {}
+}

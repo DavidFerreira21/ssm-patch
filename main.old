@@ -1,0 +1,390 @@
+resource "aws_ssm_patch_baseline" "this" {
+  for_each = {
+    for baseline in var.operational_system :
+    baseline.os_name => baseline
+  }
+
+  name             = "pd-${each.key}-baseline"
+  description      = "Patch baseline for ${each.key} PatchGroups."
+  operating_system = each.value.os_name
+
+  approval_rule {
+    approve_after_days = 0
+    patch_filter {
+      key    = "CLASSIFICATION"
+      values = each.value.classification
+    }
+  }
+}
+
+variable "operational_system" {
+  description = "Patch baseline operational systems"
+  type = list(object({
+    os_name        = string
+    classification = list(string)
+  }))
+
+  default = [
+    {
+      os_name        = "AMAZON_LINUX_2"
+      classification = ["Security", "Bugfix"]
+    },
+    {
+      os_name        = "WINDOWS"
+      classification = ["SecurityUpdates"]
+    },
+    {
+      os_name        = "AMAZON_LINUX_2023"
+      classification = ["Security", "Bugfix"]
+    },
+    {
+      os_name        = "REDHAT_ENTERPRISE_LINUX"
+      classification = ["Security", "Bugfix"]
+    }
+  ]
+}
+
+
+
+resource "aws_iam_role" "quicksetup_admin" {
+  name = local.quicksetup_admin_role_name
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "cloudformation.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "quicksetup_admin" {
+  name = "${local.quicksetup_admin_role_name}-policy"
+  role = aws_iam_role.quicksetup_admin.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sts:AssumeRole"
+        ]
+        Resource = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${local.quicksetup_exec_role_name}"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "quicksetup_execution" {
+  name = local.quicksetup_exec_role_name
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.quicksetup_admin.arn
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "quicksetup_execution" {
+  name = "${local.quicksetup_exec_role_name}-policy"
+  role = aws_iam_role.quicksetup_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "CloudFormationQuickSetupStacks"
+        Effect = "Allow"
+        Action = [
+          "cloudformation:CreateStack",
+          "cloudformation:UpdateStack",
+          "cloudformation:DeleteStack",
+          "cloudformation:DescribeStacks",
+          "cloudformation:DescribeStackEvents",
+          "cloudformation:DescribeStackResources",
+          "cloudformation:GetTemplate",
+          "cloudformation:ValidateTemplate"
+        ]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:cloudformation:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:stack/StackSet-AWS-QuickSetup-*/*"
+        ]
+      },
+
+      {
+  Sid    = "SSMDocuments"
+  Effect = "Allow"
+  Action = [
+    "ssm:UpdateDocument",
+    "ssm:DeleteDocument",
+    "ssm:DescribeDocument",
+    "ssm:GetDocument",
+    "ssm:ListDocuments",
+    "ssm:AddTagsToResource",
+    "ssm:RemoveTagsFromResource",
+    "ssm:ListTagsForResource"
+  ]
+  Resource = ["arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:document/AWSQuickSetup-*",
+    "arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:document/AWS-QuickSetup-*",
+    "arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:document/*PatchPolicy*",
+    "arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:document/*baseline*",
+    "arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:document/CreateAndAttachIAMToHybridInstanceDocument*",
+    "arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:document/CreateAndAttachIAMToEc2InstanceDocument*",
+    "arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:document/NameTagRemediationDocument*"]
+},{
+  Sid      = "SSMCreateDocument"
+  Effect   = "Allow"
+  Action   = ["ssm:CreateDocument","ssm:AddTagsToResource"]
+  Resource = "*"
+},
+
+      {
+        Sid    = "SSMAssociations"
+        Effect = "Allow"
+        Action = [
+          "ssm:CreateAssociation",
+          "ssm:UpdateAssociation",
+          "ssm:DeleteAssociation",
+          "ssm:DescribeAssociation",
+          "ssm:ListAssociations"
+        ]
+        Resource = "*"
+      },
+
+      {
+        Sid    = "SSMPatchBaselines"
+        Effect = "Allow"
+        Action = [
+          "ssm:DescribePatchBaselines",
+          "ssm:GetPatchBaseline",
+          "ssm:RegisterPatchBaselineForPatchGroup",
+          "ssm:DeregisterPatchBaselineForPatchGroup",
+          "ssm:DescribePatchGroups"
+        ]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:patchbaseline/*"
+        ]
+      },
+
+      {
+        Sid    = "SSMDiscovery"
+        Effect = "Allow"
+        Action = [
+          "ssm:DescribeInstanceInformation"
+        ]
+        Resource = "*"
+      },
+
+      {
+        Sid    = "IAMManageQuickSetupRoles"
+        Effect = "Allow"
+        Action = [
+          "iam:CreateRole",
+          "iam:GetRole",
+          "iam:DeleteRole",
+          "iam:AttachRolePolicy",
+          "iam:DetachRolePolicy",
+          "iam:PutRolePolicy",
+          "iam:DeleteRolePolicy",
+          "iam:TagRole",
+          "iam:UntagRole",
+          "iam:ListRoleTags"
+        ]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/AWSQuickSetup-*",
+          "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/AWS-QuickSetup-*",
+          "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/EnableExplorerRoleForPatchPolicyV2*",
+          "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/baseline-overrides-*"
+        ]
+      },
+
+      {
+        Sid    = "IAMPassQuickSetupRoles"
+        Effect = "Allow"
+        Action = [
+          "iam:PassRole"
+        ]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/AWSQuickSetup-*",
+          "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/AWS-QuickSetup-*",
+          "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/baseline-overrides-*"
+        ]
+        Condition = {
+          StringEquals = {
+            "iam:PassedToService" = [
+              "lambda.amazonaws.com",
+              "ssm.amazonaws.com",
+              "cloudformation.amazonaws.com"
+            ]
+          }
+        }
+      },
+
+      {
+        Sid    = "IAMCreateServiceLinkedRole"
+        Effect = "Allow"
+        Action = [
+          "iam:CreateServiceLinkedRole"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "iam:AWSServiceName" = [
+              "ssm.amazonaws.com",
+              "ssm-quicksetup.amazonaws.com"
+            ]
+          }
+        }
+      },
+
+      {
+        Sid    = "S3QuickSetupBuckets"
+        Effect = "Allow"
+        Action = [
+          "s3:CreateBucket",
+          "s3:DeleteBucket",
+          "s3:GetBucketLocation",
+          "s3:GetBucketPolicy",
+          "s3:PutBucketPolicy",
+          "s3:DeleteBucketPolicy",
+          "s3:PutBucketVersioning",
+          "s3:PutBucketLogging",
+          "s3:PutBucketPublicAccessBlock",
+          "s3:PutBucketOwnershipControls",
+          "s3:PutEncryptionConfiguration",
+          "s3:GetEncryptionConfiguration",
+          "s3:PutLifecycleConfiguration",
+          "s3:GetLifecycleConfiguration",
+          "s3:PutBucketTagging",
+          "s3:GetBucketTagging",
+          "s3:DeleteBucketTagging",
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:s3:::aws-quicksetup-patchpolicy-*",
+          "arn:${data.aws_partition.current.partition}:s3:::aws-quicksetup-patchpolicy-*/*"
+        ]
+      },
+
+      {
+        Sid    = "LambdaQuickSetupFunctions"
+        Effect = "Allow"
+        Action = [
+          "lambda:CreateFunction",
+          "lambda:GetFunction",
+          "lambda:UpdateFunctionCode",
+          "lambda:UpdateFunctionConfiguration",
+          "lambda:DeleteFunction",
+          "lambda:InvokeFunction",
+          "lambda:AddPermission",
+          "lambda:RemovePermission",
+          "lambda:TagResource",
+          "lambda:UntagResource",
+          "lambda:ListTags"
+        ]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:baseline-overrides-*",
+          "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:delete-name-tags-*"
+        ]
+      },
+
+      {
+        Sid    = "ResourceDiscovery"
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances",
+          "ec2:DescribeTags",
+          "tag:GetResources",
+          "resource-groups:GetGroup",
+          "resource-groups:ListGroups",
+          "resource-groups:SearchResources"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+data "aws_caller_identity" "current" {}
+
+data "aws_partition" "current" {}
+
+data "aws_region" "current" {}
+
+
+
+locals {
+  selected_patch_baselines = jsonencode({
+    for key, baseline in aws_ssm_patch_baseline.this :
+    baseline.operating_system => {
+      value       = baseline.id
+      label       = baseline.name
+      description = baseline.description
+      disabled    = false
+    }
+  })
+
+  quicksetup_admin_role_name = "AWS-QuickSetup-StackSet-Local-AdministrationRole"
+  quicksetup_exec_role_name  = "AWS-QuickSetup-StackSet-Local-ExecutionRole"
+}
+
+resource "aws_ssmquicksetup_configuration_manager" "example" {
+  name = "example"
+
+  configuration_definition {
+    local_deployment_administration_role_arn =  aws_iam_role.quicksetup_admin.arn
+    local_deployment_execution_role_name     = aws_iam_role.quicksetup_execution.name
+
+    type = "AWSQuickSetupType-PatchPolicy"
+
+    parameters = {
+        PatchPolicyName = "example"
+        ConfigurationOptionsPatchOperation    = "Scan"
+        ConfigurationOptionsScanValue = "cron(0/30 * * * ? *)"
+        # ConfigurationOptionsInstallValue        = "cron(0 3 ? * 1 *)"
+        ConfigurationOptionsScanNextInterval  = "false"
+        RebootOption                        = "NoReboot"
+        PatchBaselineRegion     = data.aws_region.current.region
+        PatchBaselineUseDefault = "custom"
+        SelectedPatchBaselines  = local.selected_patch_baselines
+
+        
+
+        OutputLogEnableS3         = "false"
+        # OutputS3BucketName = "my-patchmanager-logs"
+        # OutputS3KeyPrefix  = "patch-policy/"
+        RateControlConcurrency    = "10%"
+        RateControlErrorThreshold = "2%"
+        IsPolicyAttachAllowed     = "false"
+
+        TargetAccounts = data.aws_caller_identity.current.account_id
+        TargetRegions  = data.aws_region.current.region
+        TargetType     = "Tags"
+        TargetTagKey      = "PatchManagement"
+        TargetTagValue   = "true"
+    }
+
+    
+  }
+  depends_on = [
+    aws_iam_role.quicksetup_admin,
+    aws_iam_role.quicksetup_execution,
+    aws_iam_role_policy.quicksetup_admin,
+    aws_iam_role_policy.quicksetup_execution
+  ]
+}

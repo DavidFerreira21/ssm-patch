@@ -1,0 +1,72 @@
+{
+  "Records": [
+    {
+      "eventID": "1",
+      "eventName": "MODIFY",
+      "eventVersion": "1.1",
+      "eventSource": "aws:dynamodb",
+      "awsRegion": "us-east-1",
+      "dynamodb": {
+        "ApproximateCreationDateTime": 1772810400,
+        "Keys": {
+          "pk": {
+            "S": "ACCOUNT#123456789012#INSTANCE#i-abc123"
+          },
+          "sk": {
+            "S": "REBOOT#2026-05-07T09:00:00Z#req-001"
+          }
+        },
+        "OldImage": {
+          "pk": {
+            "S": "ACCOUNT#123456789012#INSTANCE#i-abc123"
+          },
+          "sk": {
+            "S": "REBOOT#2026-05-07T09:00:00Z#req-001"
+          },
+          "status": {
+            "S": "PENDING_APPROVAL"
+          }
+        },
+        "NewImage": {
+          "pk": {
+            "S": "ACCOUNT#123456789012#INSTANCE#i-abc123"
+          },
+          "sk": {
+            "S": "REBOOT#2026-05-07T09:00:00Z#req-001"
+          },
+          "request_id": {
+            "S": "req-001"
+          },
+          "account_id": {
+            "S": "123456789012"
+          },
+          "region": {
+            "S": "us-east-1"
+          },
+          "instance_id": {
+            "S": "i-abc123"
+          },
+          "hostname": {
+            "S": "srv-api-01"
+          },
+          "patch_reboot_window": {
+            "S": "weekly-sunday-02"
+          },
+          "status": {
+            "S": "APPROVED"
+          },
+          "created_at": {
+            "S": "2026-05-07T09:00:00Z"
+          },
+          "updated_at": {
+            "S": "2026-05-07T09:00:00Z"
+          }
+        },
+        "SequenceNumber": "111",
+        "SizeBytes": 1,
+        "StreamViewType": "NEW_AND_OLD_IMAGES"
+      },
+      "eventSourceARN": "arn:aws:dynamodb:us-east-1:123456789012:table/ssm-patch-reboot-requests/stream/2026-05-07T09:00:00.000"
+    }
+  ]
+}

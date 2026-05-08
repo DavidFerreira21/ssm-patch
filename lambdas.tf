@@ -25,60 +25,76 @@ resource "aws_iam_role_policy" "discovery_lambda" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "SSMReadPatchCompliance"
-        Effect = "Allow"
-        Action = [
-          "ssm:DescribeInstanceInformation",
-          "ssm:DescribeInstancePatchStates",
-          "ssm:DescribeMaintenanceWindows",
-          "ssm:ListResourceComplianceSummaries"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "EC2ReadAndCleanupTags"
-        Effect = "Allow"
-        Action = [
-          "ec2:DeleteTags",
-          "ec2:DescribeInstances",
-          "ec2:DescribeTags"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "DynamoDbWorkflowState"
-        Effect = "Allow"
-        Action = [
-          "dynamodb:PutItem",
-          "dynamodb:Query",
-          "dynamodb:UpdateItem"
-        ]
-        Resource = [
-          aws_dynamodb_table.reboot_requests[0].arn,
-          "${aws_dynamodb_table.reboot_requests[0].arn}/index/gsi1-${local.prefix_name}"
-        ]
-      },
-      {
-        Sid    = "StsIdentity"
-        Effect = "Allow"
-        Action = [
-          "sts:GetCallerIdentity"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "CloudWatchLogs"
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
-      }
-    ]
+    Statement = concat(
+      [
+        {
+          Sid    = "SSMReadPatchCompliance"
+          Effect = "Allow"
+          Action = [
+            "ssm:DescribeInstanceInformation",
+            "ssm:DescribeInstancePatchStates",
+            "ssm:DescribeMaintenanceWindows",
+            "ssm:ListResourceComplianceSummaries"
+          ]
+          Resource = "*"
+        },
+        {
+          Sid    = "EC2ReadAndCleanupTags"
+          Effect = "Allow"
+          Action = [
+            "ec2:DeleteTags",
+            "ec2:DescribeInstances",
+            "ec2:DescribeTags"
+          ]
+          Resource = "*"
+        },
+        {
+          Sid    = "DynamoDbWorkflowState"
+          Effect = "Allow"
+          Action = [
+            "dynamodb:PutItem",
+            "dynamodb:Query",
+            "dynamodb:UpdateItem"
+          ]
+          Resource = [
+            aws_dynamodb_table.reboot_requests[0].arn,
+            "${aws_dynamodb_table.reboot_requests[0].arn}/index/gsi1-${local.prefix_name}"
+          ]
+        },
+        {
+          Sid    = "StsIdentity"
+          Effect = "Allow"
+          Action = [
+            "sts:GetCallerIdentity"
+          ]
+          Resource = "*"
+        },
+        {
+          Sid    = "CloudWatchLogs"
+          Effect = "Allow"
+          Action = [
+            "logs:CreateLogGroup",
+            "logs:CreateLogStream",
+            "logs:PutLogEvents"
+          ]
+          Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
+        }
+      ],
+      length(var.lambda_subnet_ids) > 0 ? [
+        {
+          Sid    = "VpcNetworking"
+          Effect = "Allow"
+          Action = [
+            "ec2:CreateNetworkInterface",
+            "ec2:DescribeNetworkInterfaces",
+            "ec2:DeleteNetworkInterface",
+            "ec2:AssignPrivateIpAddresses",
+            "ec2:UnassignPrivateIpAddresses"
+          ]
+          Resource = "*"
+        }
+      ] : []
+    )
   })
 }
 
@@ -109,58 +125,74 @@ resource "aws_iam_role_policy" "executor_lambda" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "EC2TagInstances"
-        Effect = "Allow"
-        Action = [
-          "ec2:CreateTags"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "DynamoDbWorkflowState"
-        Effect = "Allow"
-        Action = [
-          "dynamodb:GetItem",
-          "dynamodb:Query",
-          "dynamodb:UpdateItem"
-        ]
-        Resource = [
-          aws_dynamodb_table.reboot_requests[0].arn,
-          "${aws_dynamodb_table.reboot_requests[0].arn}/index/gsi1-${local.prefix_name}"
-        ]
-      },
-      {
-        Sid    = "DynamoDbStreamRead"
-        Effect = "Allow"
-        Action = [
-          "dynamodb:DescribeStream",
-          "dynamodb:GetRecords",
-          "dynamodb:GetShardIterator",
-          "dynamodb:ListStreams"
-        ]
-        Resource = aws_dynamodb_table.reboot_requests[0].stream_arn
-      },
-      {
-        Sid    = "StsIdentity"
-        Effect = "Allow"
-        Action = [
-          "sts:GetCallerIdentity"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "CloudWatchLogs"
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
-      }
-    ]
+    Statement = concat(
+      [
+        {
+          Sid    = "EC2TagInstances"
+          Effect = "Allow"
+          Action = [
+            "ec2:CreateTags"
+          ]
+          Resource = "*"
+        },
+        {
+          Sid    = "DynamoDbWorkflowState"
+          Effect = "Allow"
+          Action = [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:UpdateItem"
+          ]
+          Resource = [
+            aws_dynamodb_table.reboot_requests[0].arn,
+            "${aws_dynamodb_table.reboot_requests[0].arn}/index/gsi1-${local.prefix_name}"
+          ]
+        },
+        {
+          Sid    = "DynamoDbStreamRead"
+          Effect = "Allow"
+          Action = [
+            "dynamodb:DescribeStream",
+            "dynamodb:GetRecords",
+            "dynamodb:GetShardIterator",
+            "dynamodb:ListStreams"
+          ]
+          Resource = aws_dynamodb_table.reboot_requests[0].stream_arn
+        },
+        {
+          Sid    = "StsIdentity"
+          Effect = "Allow"
+          Action = [
+            "sts:GetCallerIdentity"
+          ]
+          Resource = "*"
+        },
+        {
+          Sid    = "CloudWatchLogs"
+          Effect = "Allow"
+          Action = [
+            "logs:CreateLogGroup",
+            "logs:CreateLogStream",
+            "logs:PutLogEvents"
+          ]
+          Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
+        }
+      ],
+      length(var.lambda_subnet_ids) > 0 ? [
+        {
+          Sid    = "VpcNetworking"
+          Effect = "Allow"
+          Action = [
+            "ec2:CreateNetworkInterface",
+            "ec2:DescribeNetworkInterfaces",
+            "ec2:DeleteNetworkInterface",
+            "ec2:AssignPrivateIpAddresses",
+            "ec2:UnassignPrivateIpAddresses"
+          ]
+          Resource = "*"
+        }
+      ] : []
+    )
   })
 }
 
@@ -205,6 +237,15 @@ resource "aws_lambda_function" "discovery" {
     }
   }
 
+  dynamic "vpc_config" {
+    for_each = length(var.lambda_subnet_ids) > 0 ? [1] : []
+
+    content {
+      subnet_ids         = var.lambda_subnet_ids
+      security_group_ids = var.lambda_security_group_ids
+    }
+  }
+
   depends_on = [
     aws_cloudwatch_log_group.discovery
   ]
@@ -230,6 +271,15 @@ resource "aws_lambda_function" "executor" {
       ACTIVE_REQUESTS_INDEX_NAME = "gsi1-${local.prefix_name}"
       REBOOT_REQUIRED_TAG_KEY    = var.reboot_required_tag_key
       REBOOT_REQUIRED_TAG_VALUE  = var.reboot_required_tag_value
+    }
+  }
+
+  dynamic "vpc_config" {
+    for_each = length(var.lambda_subnet_ids) > 0 ? [1] : []
+
+    content {
+      subnet_ids         = var.lambda_subnet_ids
+      security_group_ids = var.lambda_security_group_ids
     }
   }
 

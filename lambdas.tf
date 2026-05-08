@@ -1,84 +1,6 @@
-data "aws_caller_identity" "current" {}
-
-data "aws_region" "current" {}
-
-data "aws_partition" "current" {}
-
-locals {
-  enabled = var.reboot_automation_enabled
-
-  discovery_lambda_name = "${var.dynamodb_table_name}-discovery"
-  executor_lambda_name  = "${var.dynamodb_table_name}-executor"
-  active_requests_index = "gsi1-active-requests"
-
-  common_tags = {
-    ManagedBy = "Terraform"
-    Workload  = "ssm-patch-reboot-automation"
-  }
-}
-
-data "archive_file" "discovery" {
-  count       = local.enabled ? 1 : 0
-  type        = "zip"
-  source_dir  = "${path.module}/lambdas/discovery"
-  output_path = "${path.module}/.terraform/discovery.zip"
-}
-
-data "archive_file" "executor" {
-  count       = local.enabled ? 1 : 0
-  type        = "zip"
-  source_dir  = "${path.module}/lambdas/executor"
-  output_path = "${path.module}/.terraform/executor.zip"
-}
-
-resource "aws_dynamodb_table" "reboot_requests" {
-  count        = local.enabled ? 1 : 0
-  name         = var.dynamodb_table_name
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "pk"
-  range_key    = "sk"
-
-  attribute {
-    name = "pk"
-    type = "S"
-  }
-
-  attribute {
-    name = "sk"
-    type = "S"
-  }
-
-  attribute {
-    name = "gsi1pk"
-    type = "S"
-  }
-
-  attribute {
-    name = "gsi1sk"
-    type = "S"
-  }
-
-  global_secondary_index {
-    name            = local.active_requests_index
-    hash_key        = "gsi1pk"
-    range_key       = "gsi1sk"
-    projection_type = "ALL"
-  }
-
-  ttl {
-    attribute_name = "expires_at"
-    enabled        = true
-  }
-
-  stream_enabled   = true
-  stream_view_type = "NEW_AND_OLD_IMAGES"
-
-  tags = local.common_tags
-}
-
 resource "aws_iam_role" "discovery_lambda" {
   count = local.enabled ? 1 : 0
-  name  = "${local.discovery_lambda_name}-role"
+  name  = "discovery-${local.prefix_name}-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -98,7 +20,7 @@ resource "aws_iam_role" "discovery_lambda" {
 
 resource "aws_iam_role_policy" "discovery_lambda" {
   count = local.enabled ? 1 : 0
-  name  = "${local.discovery_lambda_name}-policy"
+  name  = "discovery-${local.prefix_name}-policy"
   role  = aws_iam_role.discovery_lambda[0].id
 
   policy = jsonencode({
@@ -110,7 +32,8 @@ resource "aws_iam_role_policy" "discovery_lambda" {
         Action = [
           "ssm:DescribeInstanceInformation",
           "ssm:DescribeInstancePatchStates",
-          "ssm:ListComplianceItems"
+          "ssm:DescribeMaintenanceWindows",
+          "ssm:ListResourceComplianceSummaries"
         ]
         Resource = "*"
       },
@@ -134,7 +57,7 @@ resource "aws_iam_role_policy" "discovery_lambda" {
         ]
         Resource = [
           aws_dynamodb_table.reboot_requests[0].arn,
-          "${aws_dynamodb_table.reboot_requests[0].arn}/index/${local.active_requests_index}"
+          "${aws_dynamodb_table.reboot_requests[0].arn}/index/gsi1-${local.prefix_name}"
         ]
       },
       {
@@ -153,7 +76,7 @@ resource "aws_iam_role_policy" "discovery_lambda" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
       }
     ]
   })
@@ -161,7 +84,7 @@ resource "aws_iam_role_policy" "discovery_lambda" {
 
 resource "aws_iam_role" "executor_lambda" {
   count = local.enabled ? 1 : 0
-  name  = "${local.executor_lambda_name}-role"
+  name  = "executor-${local.prefix_name}-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -181,7 +104,7 @@ resource "aws_iam_role" "executor_lambda" {
 
 resource "aws_iam_role_policy" "executor_lambda" {
   count = local.enabled ? 1 : 0
-  name  = "${local.executor_lambda_name}-policy"
+  name  = "executor-${local.prefix_name}-policy"
   role  = aws_iam_role.executor_lambda[0].id
 
   policy = jsonencode({
@@ -205,7 +128,7 @@ resource "aws_iam_role_policy" "executor_lambda" {
         ]
         Resource = [
           aws_dynamodb_table.reboot_requests[0].arn,
-          "${aws_dynamodb_table.reboot_requests[0].arn}/index/${local.active_requests_index}"
+          "${aws_dynamodb_table.reboot_requests[0].arn}/index/gsi1-${local.prefix_name}"
         ]
       },
       {
@@ -235,7 +158,7 @@ resource "aws_iam_role_policy" "executor_lambda" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
       }
     ]
   })
@@ -243,7 +166,7 @@ resource "aws_iam_role_policy" "executor_lambda" {
 
 resource "aws_cloudwatch_log_group" "discovery" {
   count             = local.enabled ? 1 : 0
-  name              = "/aws/lambda/${local.discovery_lambda_name}"
+  name              = "/aws/lambda/discovery-${local.prefix_name}"
   retention_in_days = var.retention_days
 
   tags = local.common_tags
@@ -251,7 +174,7 @@ resource "aws_cloudwatch_log_group" "discovery" {
 
 resource "aws_cloudwatch_log_group" "executor" {
   count             = local.enabled ? 1 : 0
-  name              = "/aws/lambda/${local.executor_lambda_name}"
+  name              = "/aws/lambda/executor-${local.prefix_name}"
   retention_in_days = var.retention_days
 
   tags = local.common_tags
@@ -259,7 +182,7 @@ resource "aws_cloudwatch_log_group" "executor" {
 
 resource "aws_lambda_function" "discovery" {
   count            = local.enabled ? 1 : 0
-  function_name    = local.discovery_lambda_name
+  function_name    = "discovery-${local.prefix_name}"
   role             = aws_iam_role.discovery_lambda[0].arn
   handler          = "app.lambda_handler"
   runtime          = var.lambda_runtime
@@ -271,7 +194,7 @@ resource "aws_lambda_function" "discovery" {
   environment {
     variables = {
       DDB_TABLE_NAME              = aws_dynamodb_table.reboot_requests[0].name
-      ACTIVE_REQUESTS_INDEX_NAME  = local.active_requests_index
+      ACTIVE_REQUESTS_INDEX_NAME  = "gsi1-${local.prefix_name}"
       PATCH_MANAGEMENT_TAG_KEY    = var.patch_management_tag_key
       PATCH_MANAGEMENT_TAG_VALUE  = var.patch_management_tag_value
       PATCH_REBOOT_WINDOW_TAG_KEY = var.patch_reboot_window_tag_key
@@ -291,7 +214,7 @@ resource "aws_lambda_function" "discovery" {
 
 resource "aws_lambda_function" "executor" {
   count            = local.enabled ? 1 : 0
-  function_name    = local.executor_lambda_name
+  function_name    = "executor-${local.prefix_name}"
   role             = aws_iam_role.executor_lambda[0].arn
   handler          = "app.lambda_handler"
   runtime          = var.lambda_runtime
@@ -304,7 +227,7 @@ resource "aws_lambda_function" "executor" {
     variables = {
       DDB_TABLE_NAME             = aws_dynamodb_table.reboot_requests[0].name
       GRACE_HOURS                = tostring(var.grace_hours)
-      ACTIVE_REQUESTS_INDEX_NAME = local.active_requests_index
+      ACTIVE_REQUESTS_INDEX_NAME = "gsi1-${local.prefix_name}"
       REBOOT_REQUIRED_TAG_KEY    = var.reboot_required_tag_key
       REBOOT_REQUIRED_TAG_VALUE  = var.reboot_required_tag_value
     }
@@ -319,7 +242,7 @@ resource "aws_lambda_function" "executor" {
 
 resource "aws_cloudwatch_event_rule" "discovery" {
   count               = local.enabled ? 1 : 0
-  name                = "${local.discovery_lambda_name}-schedule"
+  name                = "discovery-${local.prefix_name}-schedule"
   schedule_expression = var.discovery_schedule_expression
 
   tags = local.common_tags
@@ -355,6 +278,9 @@ resource "aws_lambda_event_source_mapping" "executor_stream" {
         eventName = ["INSERT", "MODIFY"]
         dynamodb = {
           NewImage = {
+            region = {
+              S = [data.aws_region.current.region]
+            }
             status = {
               S = ["APPROVED", "AUTO_APPROVED"]
             }

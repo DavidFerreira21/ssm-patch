@@ -150,12 +150,14 @@ Fluxo Discovery
 
 Usar SSM Compliance:
 
-ssm.list_compliance_items(...)
+ssm.list_resource_compliance_summaries(...)
 
 Filtrar:
 
 ComplianceType = Patch
 Status = NON_COMPLIANT
+
+Filtrar ResourceType = ManagedInstance na resposta.
 
 Deduplicar por ResourceId.
 

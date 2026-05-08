@@ -15,5 +15,5 @@ output "dynamodb_stream_arn" {
 }
 
 output "active_requests_index_name" {
-  value = try(local.active_requests_index, null)
+  value = local.enabled ? "gsi1-${local.prefix_name}" : null
 }

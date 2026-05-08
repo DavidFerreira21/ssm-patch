@@ -10,22 +10,24 @@ variable "dynamodb_table_name" {
 
 variable "discovery_schedule_expression" {
   type    = string
-  default = "cron(0 9,17 * * ? *)"
+  default = "cron(0/5 * * * ? *)"
 }
 
 variable "retention_days" {
   type    = number
-  default = 60
+  default = 90
 }
 
 variable "postpone_days" {
-  type    = number
-  default = 6
+  type        = number
+  default     = 6
+  description = "Number of days added to postponed_until each time a reboot request is postponed."
 }
 
 variable "max_postpones" {
-  type    = number
-  default = 1
+  type        = number
+  default     = 1
+  description = "Maximum number of times a reboot request can be postponed before discovery marks it as invalid."
 }
 
 variable "grace_hours" {

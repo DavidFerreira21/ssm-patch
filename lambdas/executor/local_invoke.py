@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -43,8 +44,18 @@ def apply_env() -> None:
         os.environ.setdefault(key, value)
 
 
+def configure_logging() -> None:
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        force=True,
+    )
+
+
 def main() -> None:
     apply_env()
+    configure_logging()
     import app
 
     event = json.loads(EVENT_FILE.read_text(encoding="utf-8"))

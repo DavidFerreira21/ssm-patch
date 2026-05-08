@@ -18,6 +18,7 @@ __pycache__/
 venv/
 env/
 
+security-reports/
 
 
 .DS_Store

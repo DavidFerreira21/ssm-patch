@@ -78,6 +78,7 @@ jobs:
           scan-type: config
           scan-ref: .
           scanners: misconfig
+          cache: "false"
           severity: HIGH,CRITICAL
           format: table
           exit-code: "1"

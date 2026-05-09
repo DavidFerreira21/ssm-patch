@@ -13,9 +13,9 @@ data "aws_region" "current" {}
 locals {
   enabled = var.patch_install_automation_enabled
 
-  prefix_name = "${data.aws_region.current.name}-${data.aws_caller_identity.current.account_id}-dev"
-  dynamodb_table_arn         = aws_dynamodb_table.install_requests[0].arn
-  dynamodb_stream_arn        = aws_dynamodb_table.install_requests[0].stream_arn
+  prefix_name         = "${data.aws_region.current.name}-${data.aws_caller_identity.current.account_id}-dev"
+  dynamodb_table_arn  = aws_dynamodb_table.install_requests[0].arn
+  dynamodb_stream_arn = aws_dynamodb_table.install_requests[0].stream_arn
 
   common_tags = {
     ManagedBy = "Terraform"

@@ -23,7 +23,7 @@ output "dynamodb_stream_arn" {
 }
 
 output "active_requests_index_name" {
-  value = try(aws_dynamodb_table.install_requests[0].global_secondary_index[0].name, null)
+  value = try(one(aws_dynamodb_table.install_requests[0].global_secondary_index).name, null)
 }
 
 ###########################################

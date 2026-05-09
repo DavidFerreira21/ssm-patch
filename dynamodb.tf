@@ -50,3 +50,5 @@ resource "aws_dynamodb_table" "install_requests" {
 
   tags = local.common_tags
 }
+
+

@@ -240,6 +240,32 @@ checkov -d .
 trivy fs --scanners vuln,misconfig,secret .
 ```
 
+## GitHub Actions
+
+O repositório possui um workflow em [`.github/workflows/security.yml`](./.github/workflows/security.yml) com três frentes:
+
+- `lint`
+  - `terraform fmt -check`
+  - `terraform init -backend=false`
+  - `terraform validate`
+  - `py_compile` dos arquivos Python
+- `sast`
+  - `bandit`
+  - `checkov`
+  - `trivy fs`
+- `dast`
+  - `OWASP ZAP` baseline scan
+  - executa somente quando existir uma URL alvo
+
+### Como usar o DAST
+
+O job de DAST é opcional porque este repositório não expõe uma aplicação HTTP local no próprio código.
+
+Você pode informar a URL de duas formas:
+
+- variável do repositório `DAST_TARGET_URL`
+- `workflow_dispatch` com o input `dast_target_url`
+
 ## Notas
 
 - O `discovery` é o reconciliador do processo.

@@ -1,3 +1,7 @@
+###########################################
+# Discovery Lambda IAM
+###########################################
+
 resource "aws_iam_role" "discovery_lambda" {
   count = local.enabled ? 1 : 0
   name  = "discovery-${local.prefix_name}-role"
@@ -39,10 +43,22 @@ resource "aws_iam_role_policy" "discovery_lambda" {
           Resource = "*"
         },
         {
-          Sid    = "EC2ReadAndCleanupTags"
+          Sid    = "EC2DeletePatchInstallApprovalTag"
           Effect = "Allow"
           Action = [
-            "ec2:DeleteTags",
+            "ec2:DeleteTags"
+          ]
+          Resource = "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:instance/*"
+          Condition = {
+            "ForAllValues:StringEquals" = {
+              "aws:TagKeys" = [var.patch_install_approved_tag_key]
+            }
+          }
+        },
+        {
+          Sid    = "EC2DescribeInstancesAndTags"
+          Effect = "Allow"
+          Action = [
             "ec2:DescribeInstances",
             "ec2:DescribeTags"
           ]
@@ -57,8 +73,8 @@ resource "aws_iam_role_policy" "discovery_lambda" {
             "dynamodb:UpdateItem"
           ]
           Resource = [
-            aws_dynamodb_table.reboot_requests[0].arn,
-            "${aws_dynamodb_table.reboot_requests[0].arn}/index/gsi1-${local.prefix_name}"
+            local.dynamodb_table_arn,
+            "${local.dynamodb_table_arn}/index/${local.active_requests_index_name}"
           ]
         },
         {
@@ -70,14 +86,23 @@ resource "aws_iam_role_policy" "discovery_lambda" {
           Resource = "*"
         },
         {
-          Sid    = "CloudWatchLogs"
+          Sid    = "CloudWatchLogsCreateGroup"
           Effect = "Allow"
           Action = [
-            "logs:CreateLogGroup",
+            "logs:CreateLogGroup"
+          ]
+          Resource = "*"
+        },
+        {
+          Sid    = "CloudWatchLogsWriteDiscovery"
+          Effect = "Allow"
+          Action = [
             "logs:CreateLogStream",
             "logs:PutLogEvents"
           ]
-          Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
+          Resource = [
+            "${aws_cloudwatch_log_group.discovery[0].arn}:*"
+          ]
         }
       ],
       length(var.lambda_subnet_ids) > 0 ? [
@@ -97,6 +122,10 @@ resource "aws_iam_role_policy" "discovery_lambda" {
     )
   })
 }
+
+###########################################
+# Executor Lambda IAM
+###########################################
 
 resource "aws_iam_role" "executor_lambda" {
   count = local.enabled ? 1 : 0
@@ -133,7 +162,15 @@ resource "aws_iam_role_policy" "executor_lambda" {
           Action = [
             "ec2:CreateTags"
           ]
-          Resource = "*"
+          Resource = "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:instance/*"
+          Condition = {
+            StringEquals = {
+              "aws:RequestTag/${var.patch_install_approved_tag_key}" = var.patch_install_approved_tag_value
+            }
+            "ForAllValues:StringEquals" = {
+              "aws:TagKeys" = [var.patch_install_approved_tag_key]
+            }
+          }
         },
         {
           Sid    = "DynamoDbWorkflowState"
@@ -144,8 +181,8 @@ resource "aws_iam_role_policy" "executor_lambda" {
             "dynamodb:UpdateItem"
           ]
           Resource = [
-            aws_dynamodb_table.reboot_requests[0].arn,
-            "${aws_dynamodb_table.reboot_requests[0].arn}/index/gsi1-${local.prefix_name}"
+            local.dynamodb_table_arn,
+            "${local.dynamodb_table_arn}/index/${local.active_requests_index_name}"
           ]
         },
         {
@@ -157,7 +194,7 @@ resource "aws_iam_role_policy" "executor_lambda" {
             "dynamodb:GetShardIterator",
             "dynamodb:ListStreams"
           ]
-          Resource = aws_dynamodb_table.reboot_requests[0].stream_arn
+          Resource = local.dynamodb_stream_arn
         },
         {
           Sid    = "StsIdentity"
@@ -168,14 +205,23 @@ resource "aws_iam_role_policy" "executor_lambda" {
           Resource = "*"
         },
         {
-          Sid    = "CloudWatchLogs"
+          Sid    = "CloudWatchLogsCreateGroup"
           Effect = "Allow"
           Action = [
-            "logs:CreateLogGroup",
+            "logs:CreateLogGroup"
+          ]
+          Resource = "*"
+        },
+        {
+          Sid    = "CloudWatchLogsWriteExecutor"
+          Effect = "Allow"
+          Action = [
             "logs:CreateLogStream",
             "logs:PutLogEvents"
           ]
-          Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
+          Resource = [
+            "${aws_cloudwatch_log_group.executor[0].arn}:*"
+          ]
         }
       ],
       length(var.lambda_subnet_ids) > 0 ? [
@@ -196,6 +242,10 @@ resource "aws_iam_role_policy" "executor_lambda" {
   })
 }
 
+###########################################
+# Lambda Log Groups
+###########################################
+
 resource "aws_cloudwatch_log_group" "discovery" {
   count             = local.enabled ? 1 : 0
   name              = "/aws/lambda/discovery-${local.prefix_name}"
@@ -212,6 +262,10 @@ resource "aws_cloudwatch_log_group" "executor" {
   tags = local.common_tags
 }
 
+###########################################
+# Lambda Functions
+###########################################
+
 resource "aws_lambda_function" "discovery" {
   count            = local.enabled ? 1 : 0
   function_name    = "discovery-${local.prefix_name}"
@@ -225,15 +279,17 @@ resource "aws_lambda_function" "discovery" {
 
   environment {
     variables = {
-      DDB_TABLE_NAME              = aws_dynamodb_table.reboot_requests[0].name
-      ACTIVE_REQUESTS_INDEX_NAME  = "gsi1-${local.prefix_name}"
-      PATCH_MANAGEMENT_TAG_KEY    = var.patch_management_tag_key
-      PATCH_MANAGEMENT_TAG_VALUE  = var.patch_management_tag_value
-      PATCH_REBOOT_WINDOW_TAG_KEY = var.patch_reboot_window_tag_key
-      REBOOT_REQUIRED_TAG_KEY     = var.reboot_required_tag_key
-      MAX_POSTPONES               = tostring(var.max_postpones)
-      POSTPONE_DAYS               = tostring(var.postpone_days)
-      RETENTION_DAYS              = tostring(var.retention_days)
+      DDB_TABLE_NAME                   = local.dynamodb_table_name
+      ACTIVE_REQUESTS_INDEX_NAME       = local.active_requests_index_name
+      PATCH_MANAGEMENT_TAG_KEY         = var.patch_management_tag_key
+      PATCH_MANAGEMENT_TAG_VALUE       = var.patch_management_tag_value
+      PATCH_INSTALL_WINDOW_TAG_KEY     = var.patch_install_window_tag_key
+      PATCH_INSTALL_APPROVED_TAG_KEY   = var.patch_install_approved_tag_key
+      PATCH_INSTALL_APPROVED_TAG_VALUE = var.patch_install_approved_tag_value
+      INSTALL_GRACE_HOURS              = tostring(var.install_grace_hours)
+      MAX_POSTPONES                    = tostring(var.max_postpones)
+      POSTPONE_DAYS                    = tostring(var.postpone_days)
+      RETENTION_DAYS                   = tostring(var.retention_days)
     }
   }
 
@@ -266,11 +322,11 @@ resource "aws_lambda_function" "executor" {
 
   environment {
     variables = {
-      DDB_TABLE_NAME             = aws_dynamodb_table.reboot_requests[0].name
-      GRACE_HOURS                = tostring(var.grace_hours)
-      ACTIVE_REQUESTS_INDEX_NAME = "gsi1-${local.prefix_name}"
-      REBOOT_REQUIRED_TAG_KEY    = var.reboot_required_tag_key
-      REBOOT_REQUIRED_TAG_VALUE  = var.reboot_required_tag_value
+      DDB_TABLE_NAME                   = local.dynamodb_table_name
+      ACTIVE_REQUESTS_INDEX_NAME       = local.active_requests_index_name
+      PATCH_INSTALL_APPROVED_TAG_KEY   = var.patch_install_approved_tag_key
+      PATCH_INSTALL_APPROVED_TAG_VALUE = var.patch_install_approved_tag_value
+      INSTALL_GRACE_HOURS              = tostring(var.install_grace_hours)
     }
   }
 
@@ -289,6 +345,10 @@ resource "aws_lambda_function" "executor" {
 
   tags = local.common_tags
 }
+
+###########################################
+# Discovery Schedule
+###########################################
 
 resource "aws_cloudwatch_event_rule" "discovery" {
   count               = local.enabled ? 1 : 0
@@ -314,9 +374,13 @@ resource "aws_lambda_permission" "eventbridge_invoke_discovery" {
   source_arn    = aws_cloudwatch_event_rule.discovery[0].arn
 }
 
+###########################################
+# Executor Stream Mapping
+###########################################
+
 resource "aws_lambda_event_source_mapping" "executor_stream" {
   count             = local.enabled ? 1 : 0
-  event_source_arn  = aws_dynamodb_table.reboot_requests[0].stream_arn
+  event_source_arn  = local.dynamodb_stream_arn
   function_name     = aws_lambda_function.executor[0].arn
   starting_position = "LATEST"
   batch_size        = 10

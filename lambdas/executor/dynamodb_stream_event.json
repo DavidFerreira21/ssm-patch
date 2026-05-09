@@ -10,18 +10,18 @@
         "ApproximateCreationDateTime": 1772810400,
         "Keys": {
           "pk": {
-            "S": "ACCOUNT#123456789012#INSTANCE#i-abc123"
+            "S": "ACCOUNT#123456789012#REGION#us-east-1#INSTANCE#i-abc123"
           },
           "sk": {
-            "S": "REBOOT#2026-05-07T09:00:00Z#req-001"
+            "S": "INSTALL#2026-05-07T09:00:00Z#req-001"
           }
         },
         "OldImage": {
           "pk": {
-            "S": "ACCOUNT#123456789012#INSTANCE#i-abc123"
+            "S": "ACCOUNT#123456789012#REGION#us-east-1#INSTANCE#i-abc123"
           },
           "sk": {
-            "S": "REBOOT#2026-05-07T09:00:00Z#req-001"
+            "S": "INSTALL#2026-05-07T09:00:00Z#req-001"
           },
           "status": {
             "S": "PENDING_APPROVAL"
@@ -29,10 +29,10 @@
         },
         "NewImage": {
           "pk": {
-            "S": "ACCOUNT#123456789012#INSTANCE#i-abc123"
+            "S": "ACCOUNT#123456789012#REGION#us-east-1#INSTANCE#i-abc123"
           },
           "sk": {
-            "S": "REBOOT#2026-05-07T09:00:00Z#req-001"
+            "S": "INSTALL#2026-05-07T09:00:00Z#req-001"
           },
           "request_id": {
             "S": "req-001"
@@ -49,7 +49,7 @@
           "hostname": {
             "S": "srv-api-01"
           },
-          "patch_reboot_window": {
+          "patch_install_window": {
             "S": "weekly-sunday-02"
           },
           "status": {

@@ -1,432 +1,301 @@
-# Implementar automação de aprovação de reboot pós-patch
+# SSM Patch Install Approval Automation
 
-## Contexto
+## Visão geral
 
-As Maintenance Windows do SSM já existem e já funcionam:
+Este projeto cria uma automação de aprovação humana para **instalação de patches** em instâncias EC2 gerenciadas pelo SSM.
 
-- Patch Scan Window
-- Patch Install Window com `RebootOption=NoReboot`
-- Reboot Maintenance Window
-- Target da Reboot Window usando:
-  - `PatchRebootWindow=<window-name>`
-  - `RebootRequired=true`
+O fluxo usa:
 
-Não criar essas janelas novamente.
+- SSM Maintenance Window de `scan`
+- SSM Compliance como fonte de verdade para `NON_COMPLIANT`
+- Lambda `discovery`
+- DynamoDB + DynamoDB Streams
+- Lambda `executor`
+- SSM Maintenance Window de `install`
+- SSM Automation Document para instalar patches, reiniciar quando necessário, tentar novamente quando o Patch Baseline estiver ocupado e limpar a tag de aprovação
 
-O escopo agora é criar somente:
+O objetivo é aprovar a **instalação** e não mais um reboot isolado.
 
-1. DynamoDB
-2. DynamoDB Streams
-3. Lambda Discovery
-4. Lambda Executor
-5. IAM roles/policies necessárias
-6. EventBridge para executar a Lambda Discovery 2x por dia
-7. Código Python das duas Lambdas
+## Modelo de tags
 
----
+Tags fixas:
 
-## Objetivo
+- `PatchManagement=true`
+- `PatchInstallWindow=<valor>`
 
-Criar um workflow de aprovação para reboot pendente após patch.
+Tag dinâmica:
 
-O sistema deve:
+- `PatchInstallApproved=true`
 
-- Identificar instâncias com reboot pendente
-- Registrar solicitação no DynamoDB
-- Permitir aprovação alterando o status no DynamoDB
-- Adicionar a tag `RebootRequired=true` quando aprovado
-- Permitir que a Maintenance Window reinicie a instância
-- Resolver ou falhar a solicitação em ciclos posteriores do Discovery
-
----
-
-## Tags usadas
-
-### Obrigatória para participar do processo
+## Fluxo detalhado
 
 ```text
-PatchManagement=true
-Define a janela de reboot
-PatchRebootWindow=<window-name>
-Tag dinâmica adicionada após aprovação
-RebootRequired=true
-DynamoDB
-
-Criar tabela DynamoDB com Streams habilitado.
-
-Nome sugerido
-ssm-patch-reboot-requests
-Chaves
-pk = ACCOUNT#<account_id>#INSTANCE#<instance_id>
-sk = REBOOT#<timestamp>#<request_id>
-
-A SK deve conter timestamp + UUID para permitir histórico de múltiplas solicitações por instância.
-
-Streams
-
-Habilitar:
-
-StreamViewType = NEW_AND_OLD_IMAGES
-TTL
-
-Habilitar TTL no atributo:
-
-expires_at
-
-TTL padrão: 60 dias.
-
-Campos do item DynamoDB
-
-Exemplo de item:
-
-{
-  "pk": "ACCOUNT#123456789012#INSTANCE#i-abc123",
-  "sk": "REBOOT#2026-05-06T13:00:00Z#a1b2c3d4",
-  "request_id": "a1b2c3d4",
-  "account_id": "123456789012",
-  "region": "us-east-1",
-  "instance_id": "i-abc123",
-  "hostname": "srv-api-01",
-  "owner": "team-x",
-  "environment": "prod",
-  "patch_reboot_window": "weekly-sunday-02",
-  "installed_pending_reboot_count": 3,
-  "status": "PENDING_APPROVAL",
-  "postpone_count": 0,
-  "postponed_until": null,
-  "approved_by": null,
-  "approved_at": null,
-  "tagged_for_reboot_at": null,
-  "grace_until": null,
-  "resolution_reason": null,
-  "last_error": null,
-  "created_at": "2026-05-06T13:00:00Z",
-  "updated_at": "2026-05-06T13:00:00Z",
-  "expires_at": 1772810400
-}
-Status suportados
-Ativos
-PENDING_APPROVAL
-POSTPONED
-APPROVED
-AUTO_APPROVED
-TAGGED_FOR_REBOOT
-Finais / inativos
-RESOLVED
-FAILED_REBOOT
-MANUAL
-CANCELLED
-INSTANCE_NOT_FOUND
-FAILED_CONFIGURATION
-CANCELLED_OUT_OF_SCOPE
-Lambda Discovery
-Trigger
+1. SSM Scan Window executa AWS-RunPatchBaseline com Operation=Scan
+2. SSM Compliance marca instâncias como NON_COMPLIANT quando há patch faltando
+3. EventBridge dispara a Lambda discovery
+4. Discovery:
+   - busca instâncias NON_COMPLIANT
+   - valida PatchManagement=true
+   - valida PatchInstallWindow
+   - cria ou reconcilia request no DynamoDB
+5. Usuário ou integração altera a request:
+   - APPROVED
+   - POSTPONED
+6. DynamoDB Stream dispara a Lambda executor
+7. Executor:
+   - valida que a request ainda é a mais recente
+   - aplica PatchInstallApproved=true
+   - muda status para INSTALL_READY ou AUTO_INSTALL_READY
+   - congela expected_install_window_at e install_grace_until
+8. SSM Install Window encontra a instância aprovada
+9. Documento de automação:
+   - instala patches
+   - se encontrar o lock `patch-baseline-concurrent.lock`, espera e tenta novamente
+   - reinicia se necessário
+   - espera a instância voltar para running
+   - remove PatchInstallApproved
+10. Discovery roda novamente:
+   - se a instância ficou COMPLIANT, resolve a request
+   - se a tag dinâmica sobrou, remove e resolve
+   - se a janela esperada ainda não chegou, continua esperando
+   - se a janela passou mas o grace ainda está ativo, continua esperando
+   - se continuar NON_COMPLIANT após a janela esperada + grace, marca FAILED_REMEDIATION
+```
+
+## Diagrama
+
+```text
++------------------+
+| Scan Window      |
+| AWS-RunPatchBase |
+| Operation=Scan   |
++--------+---------+
+         |
+         v
++------------------+
+| SSM Compliance   |
+| NON_COMPLIANT    |
++--------+---------+
+         |
+         v
++------------------+        +----------------------+
+| Lambda Discovery |------->| DynamoDB             |
+| create/reconcile |        | request state/history|
++--------+---------+        +----------+-----------+
+         |                              |
+         |                              v
+         |                     +----------------------+
+         |                     | DynamoDB Streams     |
+         |                     +----------+-----------+
+         |                                |
+         |                                v
+         |                     +----------------------+
+         |                     | Lambda Executor      |
+         |                     | apply approval tag   |
+         |                     +----------+-----------+
+         |                                |
+         v                                v
++------------------+             +----------------------+
+| User / Workflow  |             | PatchInstallApproved |
+| approve/postpone |             | = true               |
++------------------+             +----------+-----------+
+                                            |
+                                            v
+                                 +----------------------+
+                                 | Install Window       |
+                                 | Automation Document  |
+                                 +----------+-----------+
+                                            |
+                                            v
+                                 +----------------------+
+                                 | Install patches      |
+                                 | RebootIfNeeded       |
+                                 | Remove approval tag  |
+                                 +----------+-----------+
+                                            |
+                                            v
+                                 +----------------------+
+                                 | Lambda Discovery     |
+                                 | resolve or fail      |
+                                 +----------------------+
+```
+
+## Status do workflow
+
+Ativos:
+
+- `PENDING_APPROVAL`
+- `POSTPONED`
+- `APPROVED`
+- `AUTO_APPROVED`
+- `INSTALL_READY`
+- `AUTO_INSTALL_READY`
+
+Finais:
+
+- `RESOLVED`
+- `MANUAL`
+- `INSTANCE_NOT_FOUND`
+- `FAILED_CONFIGURATION`
+- `FAILED_REMEDIATION`
+
+## Estrutura Terraform
+
+Arquivos principais:
+
+- [data.tf](./data.tf)
+- [dynamodb.tf](./dynamodb.tf)
+- [lambdas.tf](./lambdas.tf)
+- [maintenance_window.tf](./maintenance_window.tf)
+- [ssm_document.tf](./ssm_document.tf)
+- [variables.tf](./variables.tf)
+- [outputs.tf](./outputs.tf)
+
+## Recursos criados
+
+- DynamoDB para requests
+- Lambda `discovery`
+- Lambda `executor`
+- EventBridge schedule para `discovery`
+- DynamoDB Stream mapping para `executor`
+- SSM Maintenance Window de `scan`
+- SSM Maintenance Window de `install`
+- SSM Automation Document de instalação
+- IAM role para Automation
+
+## DynamoDB
+
+Chaves:
+
+```text
+pk = ACCOUNT#<account_id>#REGION#<region>#INSTANCE#<instance_id>
+sk = INSTALL#<timestamp>#<request_id>
+```
+
+O item guarda histórico por instância e região, além de metadata como:
 
-Criar EventBridge Schedule para executar 2x por dia.
+- `hostname`
+- `owner`
+- `environment`
+- `patch_install_window`
+- `patch_install_window_description`
+- `next_install_window_at`
+- `expected_install_window_at`
+- `install_grace_until`
+- `status`
+- `postpone_count`
+- `postponed_until`
 
-Exemplo:
+## Deploy
 
-cron(0 9,17 * * ? *)
-Responsabilidade
+Fluxo típico:
 
-A Lambda Discovery é o cérebro do workflow.
+```bash
+terraform init
+terraform plan
+terraform apply
+```
 
-Ela deve:
+Observação:
 
-Buscar itens NON_COMPLIANT no SSM Compliance
-Filtrar compliance do tipo Patch
-Consultar describe_instance_patch_states
-Verificar InstalledPendingRebootCount
-Validar tag PatchManagement=true
-Validar se existe PatchRebootWindow
-Criar ou atualizar solicitação no DynamoDB
-Tratar postergação
-Tratar grace period
-Resolver solicitação se o reboot pendente sumiu
-Detectar falha de reboot se o grace period expirou
-Não adicionar tag RebootRequired
-Fluxo Discovery
-1. Buscar NON_COMPLIANT
+- o módulo foi pensado para ser chamado `1x por região`
+- cada stack cria seu próprio DynamoDB regional
 
-Usar SSM Compliance:
+## Install windows
 
-ssm.list_resource_compliance_summaries(...)
+As janelas de instalação são configuradas pela variável `install_windows`, no formato:
 
-Filtrar:
+```hcl
+install_windows = [
+  {
+    window_name = "poc-window-1"
+    schedule    = "cron(0 22 ? * SUN *)"
+    timezone    = "America/Sao_Paulo"
+  },
+  {
+    window_name = "poc-window-2"
+    schedule    = "cron(0 23 ? * MON,WED *)"
+  }
+]
+```
 
-ComplianceType = Patch
-Status = NON_COMPLIANT
+Regras:
 
-Filtrar ResourceType = ManagedInstance na resposta.
+- `window_name`
+  - vira o nome lógico da janela
+  - também é o valor esperado na tag `PatchInstallWindow`
+- `schedule`
+  - define o cron da Maintenance Window de instalação
+- `timezone`
+  - é opcional
+  - se omitido, a janela usa `default_schedule_timezone`
 
-Deduplicar por ResourceId.
+## Scans de segurança
 
-2. Consultar patch state
+Comandos locais úteis:
 
-Para as instâncias encontradas, chamar:
+```powershell
+bandit -r .\lambdas
+checkov -d .
+trivy fs --scanners vuln,misconfig,secret .
+```
 
-ssm.describe_instance_patch_states(...)
+## Notas
 
-Processar em batch de até 50 IDs.
+- O `discovery` é o reconciliador do processo.
+- O `executor` só marca a instância como aprovada para instalação.
+- A Maintenance Window de `install` executa a mudança real.
+- O `discovery` fecha o ciclo quando a instância volta a `COMPLIANT`.
 
-Campo principal:
+## Roadmap
 
-InstalledPendingRebootCount
-3. Se InstalledPendingRebootCount == 0
+### 1. Testes automatizados
 
-Se não existe solicitação ativa:
+Próximo foco:
 
-Não fazer nada
+- testes unitários para o `discovery`
+- testes unitários para o `executor`
+- cobertura de:
+  - `PENDING_APPROVAL`
+  - `POSTPONED`
+  - `INSTALL_READY`
+  - `AUTO_INSTALL_READY`
+  - `RESOLVED`
+  - `FAILED_REMEDIATION`
 
-Se existe solicitação ativa:
+Objetivo:
 
-Remover tag RebootRequired, caso exista
-Atualizar status para RESOLVED
-Atualizar resolution_reason=MANUAL_OR_EXTERNAL_REBOOT
-Atualizar updated_at
-4. Se InstalledPendingRebootCount > 0
+- proteger a regra de negócio contra regressões
+- dar segurança para evoluir status, tags e reconciliação
 
-Validar tags EC2:
+### 2. Testes de cenário
 
-Se PatchManagement != true, ignorar
-Se não existir PatchRebootWindow, criar/atualizar item com:
-status=MANUAL
-enviar/registrar alerta futuramente
-Se existir PatchRebootWindow, seguir workflow de aprovação
-5. Se não existir solicitação ativa
+Próximo foco:
 
-Criar item:
+- validar cenários fora do caminho feliz
+- confirmar comportamento operacional fim a fim
 
-status=PENDING_APPROVAL
-6. Se existir POSTPONED
+Cenários prioritários:
 
-Se now < postponed_until:
+- tag `PatchManagement` incorreta
+- ausência de `PatchInstallWindow`
+- `POSTPONED` inválido
+- install falha e a instância continua `NON_COMPLIANT`
+- item antigo com `status` e GSI inconsistentes
+- conflito entre `scan` e `install`
+- transição correta para `FAILED_REMEDIATION`
 
-Ignorar
+### 3. Alertas e observabilidade
 
-Se now >= postponed_until:
+Próximo foco:
 
-Atualizar status para AUTO_APPROVED
-Registrar que a postergação expirou
-O DynamoDB Stream deve acionar a Lambda Executor
-7. Se existir TAGGED_FOR_REBOOT
+- criar alertas operacionais para falhas importantes
+- facilitar troubleshooting sem depender apenas de leitura manual de log
 
-Se now < grace_until:
+Alertas prioritários:
 
-Ignorar
-
-Se now >= grace_until e ainda existe pending reboot:
-
-Atualizar status para FAILED_REBOOT
-Não criar nova solicitação no mesmo ciclo
-No próximo ciclo, como FAILED_REBOOT não é ativo, uma nova solicitação será criada naturalmente se ainda houver pending reboot
-8. Se existir PENDING_APPROVAL, APPROVED ou AUTO_APPROVED
-Não criar duplicidade
-Apenas atualizar metadados se necessário
-Postergação
-
-A postergação será feita alterando status no DynamoDB futuramente.
-
-Regra:
-
-max_postpones = 1
-postpone_days = 6
-
-Quando status virar POSTPONED, o item deve ter:
-
-{
-  "postpone_count": 1,
-  "postponed_until": "<now + 6 dias>"
-}
-
-Quando o prazo expirar:
-
-Discovery muda para AUTO_APPROVED
-Executor adiciona a tag
-Notificação futura deve informar que o prazo expirou e a máquina será reiniciada na próxima janela
-Lambda Executor
-Trigger
-
-DynamoDB Streams.
-
-A Lambda Executor deve ser chamada quando houver mudança de status para:
-
-APPROVED
-AUTO_APPROVED
-Responsabilidade
-
-A Lambda Executor deve:
-
-Validar transição de status
-Validar que o item ainda é a solicitação ativa mais recente
-Adicionar tag na EC2:
-RebootRequired=true
-Atualizar item no DynamoDB:
-status=TAGGED_FOR_REBOOT
-tagged_for_reboot_at=<now>
-grace_until=<now + 8 horas>
-updated_at=<now>
-Importante
-
-A Executor não deve:
-
-Consultar compliance
-Resolver solicitação
-Criar nova solicitação
-Executar reboot
-Remover tag
-Maintenance Window
-
-Já existe e não deve ser criada.
-
-Ela funciona assim:
-
-Target:
-
-PatchRebootWindow=<window-name>
-AND
-RebootRequired=true
-
-Tasks:
-
-Priority 1: reboot da máquina
-Priority 2: remove tag RebootRequired
-
-A Maintenance Window não deve atualizar DynamoDB.
-
-A tag RebootRequired é uma autorização temporária para uma tentativa de reboot.
-
-Grace Period
-
-Após a Executor adicionar RebootRequired=true, ela deve gravar:
-
-grace_until = now + 8 horas
-
-O Discovery só pode avaliar falha depois do grace period.
-
-Regra:
-
-Se status=TAGGED_FOR_REBOOT
-e now < grace_until:
-  ignorar
-
-Se status=TAGGED_FOR_REBOOT
-e now >= grace_until
-e InstalledPendingRebootCount > 0:
-  status=FAILED_REBOOT
-
-Se InstalledPendingRebootCount == 0, o Discovery deve resolver como RESOLVED.
-
-Terraform esperado
-
-Criar arquivos ou blocos para:
-
-DynamoDB
-aws_dynamodb_table
-Stream habilitado
-TTL habilitado
-Billing mode: PAY_PER_REQUEST
-Lambda Discovery
-aws_lambda_function
-IAM Role
-IAM Policy
-CloudWatch Log Group
-EventBridge Rule
-EventBridge Target
-Lambda permission para EventBridge
-Lambda Executor
-aws_lambda_function
-IAM Role
-IAM Policy
-CloudWatch Log Group
-Event source mapping para DynamoDB Stream
-IAM Discovery Lambda
-
-Permissões necessárias:
-
-ssm:ListComplianceItems
-ssm:DescribeInstancePatchStates
-ssm:DescribeInstanceInformation
-ec2:DescribeInstances
-ec2:DescribeTags
-ec2:DeleteTags
-dynamodb:PutItem
-dynamodb:UpdateItem
-dynamodb:Query
-sts:GetCallerIdentity
-logs:CreateLogGroup
-logs:CreateLogStream
-logs:PutLogEvents
-IAM Executor Lambda
-
-Permissões necessárias:
-
-ec2:CreateTags
-dynamodb:UpdateItem
-dynamodb:Query
-dynamodb:GetItem
-sts:GetCallerIdentity
-logs:CreateLogGroup
-logs:CreateLogStream
-logs:PutLogEvents
-Variáveis Terraform sugeridas
-variable "reboot_automation_enabled" {
-  type    = bool
-  default = true
-}
-
-variable "dynamodb_table_name" {
-  type    = string
-  default = "ssm-patch-reboot-requests"
-}
-
-variable "discovery_schedule_expression" {
-  type    = string
-  default = "cron(0 9,17 * * ? *)"
-}
-
-variable "retention_days" {
-  type    = number
-  default = 60
-}
-
-variable "postpone_days" {
-  type    = number
-  default = 6
-}
-
-variable "grace_hours" {
-  type    = number
-  default = 8
-}
-
-variable "patch_management_tag_key" {
-  type    = string
-  default = "PatchManagement"
-}
-
-variable "patch_management_tag_value" {
-  type    = string
-  default = "true"
-}
-
-variable "patch_reboot_window_tag_key" {
-  type    = string
-  default = "PatchRebootWindow"
-}
-
-variable "reboot_required_tag_key" {
-  type    = string
-  default = "RebootRequired"
-}
-Observações importantes
-Não criar Maintenance Windows neste escopo.
-Não criar Patch Baselines neste escopo.
-Não criar Patch Scan/Install Tasks neste escopo.
-Criar apenas DynamoDB, Streams, Lambdas, EventBridge e IAM.
-O código deve ser idempotente.
-Não pode criar solicitações duplicadas se já existe solicitação ativa.
-FAILED_REBOOT não é ativo.
-RESOLVED não é ativo.
-Se reboot pendente continuar após FAILED_REBOOT, o próximo Discovery cria nova solicitação naturalmente.
-Se a máquina for reiniciada manualmente e ficar compliant, o Discovery deve marcar solicitação ativa como RESOLVED.
+- `FAILED_REMEDIATION`
+- `FAILED_CONFIGURATION`
+- erro na Lambda `discovery`
+- erro na Lambda `executor`
+- falha em SSM Automation / Maintenance Window

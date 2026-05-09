@@ -1,3 +1,7 @@
+###########################################
+# Terraform and Provider Versions
+###########################################
+
 terraform {
   required_version = ">= 1.5.0"
 

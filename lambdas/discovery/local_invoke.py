@@ -6,12 +6,14 @@ from pathlib import Path
 
 DEFAULT_ENV = {
     "AWS_REGION": "us-east-1",
-    "DDB_TABLE_NAME": "ssm-patch-reboot-requests",
-    "ACTIVE_REQUESTS_INDEX_NAME": "gsi1-active-requests",
+    "DDB_TABLE_NAME": "ddb-us-east-1-564606314242-dev",
+    "ACTIVE_REQUESTS_INDEX_NAME": "gsi1-us-east-1-564606314242-dev",
     "PATCH_MANAGEMENT_TAG_KEY": "PatchManagement",
     "PATCH_MANAGEMENT_TAG_VALUE": "true",
-    "PATCH_REBOOT_WINDOW_TAG_KEY": "PatchRebootWindow",
-    "REBOOT_REQUIRED_TAG_KEY": "RebootRequired",
+    "PATCH_INSTALL_WINDOW_TAG_KEY": "PatchInstallWindow",
+    "PATCH_INSTALL_APPROVED_TAG_KEY": "PatchInstallApproved",
+    "PATCH_INSTALL_APPROVED_TAG_VALUE": "true",
+    "INSTALL_GRACE_HOURS": "8",
     "RETENTION_DAYS": "60",
     "POSTPONE_DAYS": "6",
     "MAX_POSTPONES": "1",

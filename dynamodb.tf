@@ -1,6 +1,10 @@
-resource "aws_dynamodb_table" "reboot_requests" {
+###########################################
+# DynamoDB Request State
+###########################################
+
+resource "aws_dynamodb_table" "install_requests" {
   count        = local.enabled ? 1 : 0
-  name         = "ddb-${local.prefix_name}"
+  name         = local.dynamodb_table_name
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "pk"
   range_key    = "sk"
@@ -26,7 +30,7 @@ resource "aws_dynamodb_table" "reboot_requests" {
   }
 
   global_secondary_index {
-    name            = "gsi1-${local.prefix_name}"
+    name            = local.active_requests_index_name
     hash_key        = "gsi1pk"
     range_key       = "gsi1sk"
     projection_type = "ALL"

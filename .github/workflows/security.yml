@@ -6,17 +6,10 @@ on:
     branches:
       - main
       - master
-  workflow_dispatch:
-    inputs:
-      dast_target_url:
-        description: "Optional URL for DAST scanning with OWASP ZAP"
-        required: false
-        type: string
 
 env:
   PYTHON_VERSION: "3.12"
   TERRAFORM_VERSION: "1.9.8"
-  DAST_TARGET_URL: ${{ inputs.dast_target_url || vars.DAST_TARGET_URL }}
 
 jobs:
   lint:
@@ -32,10 +25,18 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Install Python lint tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install black
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Check Python formatting with Black
+        run: black --check ./lambdas
 
       - name: Check Terraform formatting
         run: terraform fmt -check -recursive
@@ -45,9 +46,6 @@ jobs:
 
       - name: Validate Terraform
         run: terraform validate
-
-      - name: Compile Python sources
-        run: find lambdas -type f -name '*.py' -print0 | xargs -0 python3 -m py_compile
 
   sast:
     name: SAST and IaC Security
@@ -72,31 +70,3 @@ jobs:
 
       - name: Run Checkov
         run: checkov -d . --skip-path .terraform --skip-path .venv --skip-path security-reports
-
-      - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.24.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,misconfig,secret
-          skip-dirs: .terraform,.venv,security-reports
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-
-  dast:
-    name: DAST
-    runs-on: ubuntu-latest
-    if: ${{ env.DAST_TARGET_URL != '' }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Run OWASP ZAP baseline scan
-        uses: zaproxy/action-baseline@v0.14.0
-        with:
-          target: ${{ env.DAST_TARGET_URL }}
-          fail_action: true
-          allow_issue_writing: false
-

@@ -19,8 +19,9 @@ variable "discovery_schedule_expression" {
 }
 
 variable "retention_days" {
+  description = "CloudWatch Logs retention in days for the Lambda log groups."
   type    = number
-  default = 90
+  default = 365
 }
 
 ###########################################

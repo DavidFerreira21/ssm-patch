@@ -251,7 +251,7 @@ O repositório possui um workflow em [`.github/workflows/security.yml`](./.githu
   - `terraform validate`
 - `sast`
   - `bandit`
-  - `checkov`
+  - `trivy config`
 
 ## Notas
 

@@ -356,7 +356,7 @@ install_windows = [
 ### Ajustes já feitos
 
 - `point_in_time_recovery` no DynamoDB
-- retenção de logs em `90` dias
+- retenção de logs em `365` dias
 - tratamento de falha por instância no `discovery`
 - tratamento de falha por record no `executor`
 - paginação de maintenance windows
@@ -374,29 +374,6 @@ install_windows = [
 - sem code signing
 - sem reserved concurrency
 - sem X-Ray
-- retenção de logs menor que 365 dias
-
-## Segurança local
-
-Script local:
-
-```text
-scripts/security_scan.sh
-```
-
-Ferramentas usadas:
-
-- `bandit`
-- `checkov`
-- `trivy`
-
-No Windows, o uso manual em PowerShell costuma ser mais previsível:
-
-```powershell
-bandit -r .\lambdas
-checkov -d .
-trivy fs --scanners vuln,misconfig,secret .
-```
 
 ## Roadmap
 

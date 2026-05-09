@@ -4,7 +4,7 @@
 
 resource "aws_dynamodb_table" "install_requests" {
   count        = local.enabled ? 1 : 0
-  name         = local.dynamodb_table_name
+  name         = "ddb-ssm-request-${local.prefix_name}"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "pk"
   range_key    = "sk"
@@ -30,7 +30,7 @@ resource "aws_dynamodb_table" "install_requests" {
   }
 
   global_secondary_index {
-    name            = local.active_requests_index_name
+    name            = "gsi1-${local.prefix_name}"
     hash_key        = "gsi1pk"
     range_key       = "gsi1sk"
     projection_type = "ALL"

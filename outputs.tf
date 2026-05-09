@@ -3,7 +3,7 @@
 ###########################################
 
 output "dynamodb_table_name" {
-  value = local.dynamodb_table_name
+  value = try(aws_dynamodb_table.install_requests[0].name, null)
 }
 
 output "dynamodb_table_arn" {
@@ -23,7 +23,7 @@ output "dynamodb_stream_arn" {
 }
 
 output "active_requests_index_name" {
-  value = local.active_requests_index_name
+  value = try(aws_dynamodb_table.install_requests[0].global_secondary_index[0].name, null)
 }
 
 ###########################################

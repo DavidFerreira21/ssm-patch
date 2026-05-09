@@ -7,12 +7,6 @@ variable "patch_install_automation_enabled" {
   default = true
 }
 
-variable "dynamodb_resource_name_override" {
-  description = "Optional override for the DynamoDB table name. Leave null to use the generated regional name."
-  type        = string
-  default     = null
-}
-
 variable "discovery_schedule_expression" {
   type    = string
   default = "cron(0/5 * * * ? *)"
@@ -83,7 +77,7 @@ variable "install_windows" {
   }))
   default = [
     {
-      window_name = "poc-window-1"
+      window_name = "install-window-1"
       schedule    = "cron(0/5 * * * ? *)"
     }
   ]

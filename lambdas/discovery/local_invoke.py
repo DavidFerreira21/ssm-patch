@@ -5,7 +5,7 @@ from pathlib import Path
 
 DEFAULT_ENV = {
     "AWS_REGION": "us-east-1",
-    "DDB_TABLE_NAME": "ddb-us-east-1-564606314242-dev",
+    "DDB_TABLE_NAME": "ddb-ssm-request-us-east-1-564606314242-dev",
     "ACTIVE_REQUESTS_INDEX_NAME": "gsi1-us-east-1-564606314242-dev",
     "PATCH_MANAGEMENT_TAG_KEY": "PatchManagement",
     "PATCH_MANAGEMENT_TAG_VALUE": "true",

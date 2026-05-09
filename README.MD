@@ -208,12 +208,12 @@ As janelas de instalação são configuradas pela variável `install_windows`, n
 ```hcl
 install_windows = [
   {
-    window_name = "poc-window-1"
+    window_name = "install-window-1"
     schedule    = "cron(0 22 ? * SUN *)"
     timezone    = "America/Sao_Paulo"
   },
   {
-    window_name = "poc-window-2"
+    window_name = "install-window-2"
     schedule    = "cron(0 23 ? * MON,WED *)"
   }
 ]

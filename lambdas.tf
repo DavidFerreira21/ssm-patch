@@ -74,7 +74,7 @@ resource "aws_iam_role_policy" "discovery_lambda" {
           ]
           Resource = [
             local.dynamodb_table_arn,
-            "${local.dynamodb_table_arn}/index/${local.active_requests_index_name}"
+            "${local.dynamodb_table_arn}/index/${aws_dynamodb_table.install_requests[0].global_secondary_index[0].name}"
           ]
         },
         {
@@ -182,7 +182,7 @@ resource "aws_iam_role_policy" "executor_lambda" {
           ]
           Resource = [
             local.dynamodb_table_arn,
-            "${local.dynamodb_table_arn}/index/${local.active_requests_index_name}"
+            "${local.dynamodb_table_arn}/index/${aws_dynamodb_table.install_requests[0].global_secondary_index[0].name}"
           ]
         },
         {
@@ -279,8 +279,8 @@ resource "aws_lambda_function" "discovery" {
 
   environment {
     variables = {
-      DDB_TABLE_NAME                   = local.dynamodb_table_name
-      ACTIVE_REQUESTS_INDEX_NAME       = local.active_requests_index_name
+      DDB_TABLE_NAME                   = aws_dynamodb_table.install_requests[0].name
+      ACTIVE_REQUESTS_INDEX_NAME       = aws_dynamodb_table.install_requests[0].global_secondary_index[0].name
       PATCH_MANAGEMENT_TAG_KEY         = var.patch_management_tag_key
       PATCH_MANAGEMENT_TAG_VALUE       = var.patch_management_tag_value
       PATCH_INSTALL_WINDOW_TAG_KEY     = var.patch_install_window_tag_key
@@ -322,8 +322,8 @@ resource "aws_lambda_function" "executor" {
 
   environment {
     variables = {
-      DDB_TABLE_NAME                   = local.dynamodb_table_name
-      ACTIVE_REQUESTS_INDEX_NAME       = local.active_requests_index_name
+      DDB_TABLE_NAME                   = aws_dynamodb_table.install_requests[0].name
+      ACTIVE_REQUESTS_INDEX_NAME       = aws_dynamodb_table.install_requests[0].global_secondary_index[0].name
       PATCH_INSTALL_APPROVED_TAG_KEY   = var.patch_install_approved_tag_key
       PATCH_INSTALL_APPROVED_TAG_VALUE = var.patch_install_approved_tag_value
       INSTALL_GRACE_HOURS              = tostring(var.install_grace_hours)

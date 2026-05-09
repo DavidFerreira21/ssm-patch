@@ -14,11 +14,6 @@ locals {
   enabled = var.patch_install_automation_enabled
 
   prefix_name = "${data.aws_region.current.name}-${data.aws_caller_identity.current.account_id}-dev"
-  dynamodb_table_name = coalesce(
-    var.dynamodb_resource_name_override,
-    "ddb-${local.prefix_name}"
-  )
-  active_requests_index_name = "gsi1-${local.prefix_name}"
   dynamodb_table_arn         = aws_dynamodb_table.install_requests[0].arn
   dynamodb_stream_arn        = aws_dynamodb_table.install_requests[0].stream_arn
 

@@ -315,7 +315,7 @@ local.prefix_name
 ```
 
 - Cada recurso monta seu próprio nome, por exemplo:
-  - `ddb-${local.prefix_name}`
+  - `ddb-ssm-request-${local.prefix_name}`
   - `discovery-${local.prefix_name}`
   - `executor-${local.prefix_name}`
 
@@ -335,12 +335,12 @@ local.prefix_name
 ```hcl
 install_windows = [
   {
-    window_name = "poc-window-1"
+    window_name = "install-window-1"
     schedule    = "cron(0 22 ? * SUN *)"
     timezone    = "America/Sao_Paulo"
   },
   {
-    window_name = "poc-window-2"
+    window_name = "install-window-2"
     schedule    = "cron(0 23 ? * MON,WED *)"
   }
 ]

@@ -51,6 +51,7 @@ deserializer = TypeDeserializer()
 # Shared Helpers
 ###########################################
 
+
 def utc_now() -> datetime:
     """Return the current time in UTC."""
     return datetime.now(UTC)
@@ -68,7 +69,9 @@ def parse_timestamp(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def compute_install_grace_until(expected_install_window_at: str | None, approved_for_install_at: datetime) -> str:
+def compute_install_grace_until(
+    expected_install_window_at: str | None, approved_for_install_at: datetime
+) -> str:
     """Compute the grace deadline using the expected window when available, otherwise approval time."""
     expected_at = parse_timestamp(expected_install_window_at) or approved_for_install_at
     if expected_at.tzinfo is None:
@@ -108,6 +111,7 @@ def log_record_action(
 ###########################################
 # Lambda Handler
 ###########################################
+
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Process DynamoDB Stream records that move requests into an executable status."""
@@ -159,7 +163,11 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 instance_id=instance_id,
                 previous_status=previous_status,
                 next_status=status,
-                extra={"event_name": event_name, "record_id": record_id, "region": item_region},
+                extra={
+                    "event_name": event_name,
+                    "record_id": record_id,
+                    "region": item_region,
+                },
             )
 
             if item_region != CURRENT_REGION:
@@ -221,6 +229,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 ###########################################
 # Functions of Request Execution
 ###########################################
+
 
 def process_request(item: dict[str, Any]) -> bool:
     """Validate the latest request, apply the install-approval tag, and mark it ready for install."""
@@ -310,7 +319,12 @@ def process_request(item: dict[str, Any]) -> bool:
     try:
         ec2_client.create_tags(
             Resources=[instance_id],
-            Tags=[{"Key": PATCH_INSTALL_APPROVED_TAG_KEY, "Value": PATCH_INSTALL_APPROVED_TAG_VALUE}],
+            Tags=[
+                {
+                    "Key": PATCH_INSTALL_APPROVED_TAG_KEY,
+                    "Value": PATCH_INSTALL_APPROVED_TAG_VALUE,
+                }
+            ],
         )
         log_record_action(
             "TAG_INSTANCE",
@@ -411,6 +425,7 @@ def process_request(item: dict[str, Any]) -> bool:
 # Functions of DynamoDB Stream and GSI
 ###########################################
 
+
 def deserialize_image(image: dict[str, Any]) -> dict[str, Any]:
     """Convert a DynamoDB Stream image into a regular Python dictionary."""
     return {key: deserializer.deserialize(value) for key, value in image.items()}
@@ -421,7 +436,9 @@ def build_active_gsi_pk(status: str) -> str:
     return f"ACTIVE#{status}"
 
 
-def build_active_gsi_sk(*, account_id: str, region: str, instance_id: str, created_at: str) -> str:
+def build_active_gsi_sk(
+    *, account_id: str, region: str, instance_id: str, created_at: str
+) -> str:
     """Build the GSI sort key that keeps active requests grouped by account, region, and instance."""
     return (
         f"ACCOUNT#{account_id}"

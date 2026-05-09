@@ -7,7 +7,6 @@ from typing import Any
 import boto3
 from boto3.dynamodb.conditions import Key
 
-
 LOGGER = logging.getLogger(__name__)
 
 TABLE_NAME = os.environ["DDB_TABLE_NAME"]
@@ -28,7 +27,9 @@ def ttl_epoch(value: datetime) -> int:
     return int((value + timedelta(days=RETENTION_DAYS)).timestamp())
 
 
-def summarize_metadata_changes(item: dict[str, Any], changes: dict[str, Any]) -> list[str]:
+def summarize_metadata_changes(
+    item: dict[str, Any], changes: dict[str, Any]
+) -> list[str]:
     """Summarize only the metadata fields that changed during a request refresh."""
     summary: list[str] = []
     tracked_fields = (
@@ -50,7 +51,9 @@ def summarize_metadata_changes(item: dict[str, Any], changes: dict[str, Any]) ->
     return summary
 
 
-def fetch_active_requests(region: str, active_statuses: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+def fetch_active_requests(
+    region: str, active_statuses: tuple[str, ...]
+) -> dict[str, dict[str, Any]]:
     """Load the newest active request per instance for the lambda's current region."""
     results: dict[str, dict[str, Any]] = {}
 
@@ -90,11 +93,15 @@ def fetch_active_requests(region: str, active_statuses: tuple[str, ...]) -> dict
             skipped_other_regions,
         )
 
-    LOGGER.info("fetched active request instances region=%s total=%s", region, len(results))
+    LOGGER.info(
+        "fetched active request instances region=%s total=%s", region, len(results)
+    )
     return results
 
 
-def fetch_latest_request(account_id: str, region: str, instance_id: str) -> dict[str, Any] | None:
+def fetch_latest_request(
+    account_id: str, region: str, instance_id: str
+) -> dict[str, Any] | None:
     """Fetch the newest request row for one instance, regardless of current status."""
     response = table.query(
         KeyConditionExpression=Key("pk").eq(build_pk(account_id, region, instance_id)),
@@ -102,7 +109,9 @@ def fetch_latest_request(account_id: str, region: str, instance_id: str) -> dict
         Limit=1,
     )
     items = response.get("Items", [])
-    LOGGER.debug("fetched latest request instance_id=%s found=%s", instance_id, bool(items))
+    LOGGER.debug(
+        "fetched latest request instance_id=%s found=%s", instance_id, bool(items)
+    )
     return items[0] if items else None
 
 
@@ -143,7 +152,9 @@ def put_new_request(
     )
 
 
-def update_request(item: dict[str, Any], changes: dict[str, Any], active_statuses: tuple[str, ...]) -> None:
+def update_request(
+    item: dict[str, Any], changes: dict[str, Any], active_statuses: tuple[str, ...]
+) -> None:
     """Apply a partial update to an existing request and keep the active-request GSI in sync."""
     next_item = {**item, **changes}
     status = next_item["status"]
@@ -206,7 +217,9 @@ def update_request(item: dict[str, Any], changes: dict[str, Any], active_statuse
     )
 
 
-def apply_active_index_fields(item: dict[str, Any], status: str, active_statuses: tuple[str, ...]) -> None:
+def apply_active_index_fields(
+    item: dict[str, Any], status: str, active_statuses: tuple[str, ...]
+) -> None:
     """Populate or clear the active-request GSI fields based on the request status."""
     if status in active_statuses:
         item["gsi1pk"] = build_active_gsi_pk(status)
@@ -232,7 +245,9 @@ def build_active_gsi_pk(status: str) -> str:
     return f"ACTIVE#{status}"
 
 
-def build_active_gsi_sk(*, account_id: str, region: str, instance_id: str, created_at: str) -> str:
+def build_active_gsi_sk(
+    *, account_id: str, region: str, instance_id: str, created_at: str
+) -> str:
     """Build the GSI sort key that keeps active requests grouped by account, region, and instance."""
     return (
         f"ACCOUNT#{account_id}"

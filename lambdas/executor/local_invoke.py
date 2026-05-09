@@ -3,7 +3,6 @@ import logging
 import os
 from pathlib import Path
 
-
 DEFAULT_ENV = {
     "AWS_REGION": "us-east-1",
     "DDB_TABLE_NAME": "ddb-us-east-1-564606314242-dev",

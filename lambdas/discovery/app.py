@@ -10,7 +10,6 @@ from botocore.exceptions import ClientError
 from discovery_dynamodb import fetch_active_requests
 from discovery_workflow import ACTIVE_STATUSES, log_instance_action, process_instance
 
-
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(LOG_LEVEL)
@@ -30,6 +29,7 @@ sts_client = boto3.client("sts")
 # Shared Helpers
 ###########################################
 
+
 def utc_now() -> datetime:
     """Return the current time in UTC."""
     return datetime.now(UTC)
@@ -48,6 +48,7 @@ def chunks(items: list[str], size: int):
 ###########################################
 # Lambda Handler
 ###########################################
+
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Run the discovery cycle for the current region and process each tracked instance."""
@@ -134,6 +135,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 # Functions of SSM Compliance
 ###########################################
 
+
 def fetch_non_compliant_instance_ids() -> set[str]:
     """List managed instances in SSM patch compliance that are currently NON_COMPLIANT."""
     instance_ids: set[str] = set()
@@ -170,7 +172,9 @@ def fetch_non_compliant_instance_ids() -> set[str]:
 
         next_token = response.get("NextToken")
         if not next_token:
-            LOGGER.info("fetched non-compliant managed instances total=%s", len(instance_ids))
+            LOGGER.info(
+                "fetched non-compliant managed instances total=%s", len(instance_ids)
+            )
             return instance_ids
 
 
@@ -178,11 +182,14 @@ def fetch_non_compliant_instance_ids() -> set[str]:
 # Functions of EC2 Inventory
 ###########################################
 
+
 def fetch_instance_details(instance_ids: list[str]) -> dict[str, dict[str, Any]]:
     """Load EC2 metadata and relevant tags for each tracked instance."""
     details: dict[str, dict[str, Any]] = {}
     if not instance_ids:
-        LOGGER.info("skipping instance detail lookup because there are no tracked instances")
+        LOGGER.info(
+            "skipping instance detail lookup because there are no tracked instances"
+        )
         return details
 
     for batch in chunks(instance_ids, 100):
@@ -198,18 +205,26 @@ def fetch_instance_details(instance_ids: list[str]) -> dict[str, dict[str, Any]]
                 instance_id = instance["InstanceId"]
                 details[instance_id] = {
                     "instance_id": instance_id,
-                    "hostname": tags.get("Name") or instance.get("PrivateDnsName") or instance_id,
+                    "hostname": tags.get("Name")
+                    or instance.get("PrivateDnsName")
+                    or instance_id,
                     "owner": tags.get("Owner"),
                     "environment": tags.get("Environment"),
-                    "patch_management_enabled": tags.get(PATCH_MANAGEMENT_TAG_KEY) == PATCH_MANAGEMENT_TAG_VALUE,
+                    "patch_management_enabled": tags.get(PATCH_MANAGEMENT_TAG_KEY)
+                    == PATCH_MANAGEMENT_TAG_VALUE,
                     "patch_install_window": tags.get(PATCH_INSTALL_WINDOW_TAG_KEY),
                     "patch_install_window_description": None,
                     "next_install_window_at": None,
                     "has_patch_install_approved_tag": (
-                        tags.get(PATCH_INSTALL_APPROVED_TAG_KEY) == PATCH_INSTALL_APPROVED_TAG_VALUE
+                        tags.get(PATCH_INSTALL_APPROVED_TAG_KEY)
+                        == PATCH_INSTALL_APPROVED_TAG_VALUE
                     ),
                 }
-    LOGGER.info("fetched instance details total=%s requested=%s", len(details), len(instance_ids))
+    LOGGER.info(
+        "fetched instance details total=%s requested=%s",
+        len(details),
+        len(instance_ids),
+    )
     return details
 
 
@@ -217,7 +232,10 @@ def fetch_instance_details(instance_ids: list[str]) -> dict[str, dict[str, Any]]
 # Functions of Maintenance Windows
 ###########################################
 
-def enrich_instance_details_with_install_windows(instance_details: dict[str, dict[str, Any]]) -> None:
+
+def enrich_instance_details_with_install_windows(
+    instance_details: dict[str, dict[str, Any]],
+) -> None:
     """Populate install window description and next execution time for each instance detail."""
     window_names = {
         details["patch_install_window"]
@@ -239,7 +257,9 @@ def enrich_instance_details_with_install_windows(instance_details: dict[str, dic
         details["next_install_window_at"] = window_data.get("next_execution_time")
 
 
-def fetch_install_window_metadata(window_names: set[str]) -> dict[str, dict[str, str | None]]:
+def fetch_install_window_metadata(
+    window_names: set[str],
+) -> dict[str, dict[str, str | None]]:
     """Load maintenance window metadata by window name and return human-friendly details."""
     results: dict[str, dict[str, str | None]] = {}
     identities: list[dict[str, Any]] = []
@@ -266,7 +286,9 @@ def fetch_install_window_metadata(window_names: set[str]) -> dict[str, dict[str,
         schedule = window.get("Schedule")
         schedule_timezone = window.get("ScheduleTimezone")
         results[window_name] = {
-            "description": humanize_maintenance_window_schedule(schedule, schedule_timezone),
+            "description": humanize_maintenance_window_schedule(
+                schedule, schedule_timezone
+            ),
             "next_execution_time": window.get("NextExecutionTime"),
         }
     return results
@@ -277,7 +299,9 @@ def resolve_install_window(
     window_name_prefix: str,
 ) -> dict[str, Any] | None:
     """Resolve a maintenance window by exact name first, then by prefix match."""
-    exact_match = next((item for item in identities if item.get("Name") == window_name_prefix), None)
+    exact_match = next(
+        (item for item in identities if item.get("Name") == window_name_prefix), None
+    )
     if exact_match:
         return exact_match
 
@@ -301,7 +325,9 @@ def resolve_install_window(
     return None
 
 
-def humanize_maintenance_window_schedule(schedule: str | None, schedule_timezone: str | None) -> str | None:
+def humanize_maintenance_window_schedule(
+    schedule: str | None, schedule_timezone: str | None
+) -> str | None:
     """Convert a maintenance window cron expression into a short human-friendly description."""
     if not schedule:
         return None
@@ -316,11 +342,21 @@ def humanize_maintenance_window_schedule(schedule: str | None, schedule_timezone
     minute, hour, day_of_month, month, day_of_week, _year = parts
     timezone_text = f" ({schedule_timezone})" if schedule_timezone else ""
 
-    if minute.startswith("0/") and hour == "*" and day_of_month == "*" and day_of_week == "?":
+    if (
+        minute.startswith("0/")
+        and hour == "*"
+        and day_of_month == "*"
+        and day_of_week == "?"
+    ):
         interval = minute.split("/", 1)[1]
         return f"a cada {interval} minutos{timezone_text}"
 
-    if minute == "0" and hour.startswith("0/") and day_of_month == "*" and day_of_week == "?":
+    if (
+        minute == "0"
+        and hour.startswith("0/")
+        and day_of_month == "*"
+        and day_of_week == "?"
+    ):
         interval = hour.split("/", 1)[1]
         return f"a cada {interval} horas{timezone_text}"
 

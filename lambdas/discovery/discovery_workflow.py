@@ -42,7 +42,6 @@ from discovery_constants import (
 )
 from discovery_dynamodb import fetch_latest_request, put_new_request, update_request
 
-
 LOGGER = logging.getLogger(__name__)
 
 PATCH_INSTALL_APPROVED_TAG_KEY = os.environ["PATCH_INSTALL_APPROVED_TAG_KEY"]
@@ -204,7 +203,9 @@ def handle_compliant_instance(
             log_instance_action(
                 "CLEANUP_TAG",
                 instance_id=instance_id,
-                previous_status=active_request.get("status") if active_request else None,
+                previous_status=(
+                    active_request.get("status") if active_request else None
+                ),
                 reason=REASON_INSTANCE_COMPLIANT_APPROVAL_TAG_REMOVED,
             )
         except ClientError as error:
@@ -217,7 +218,9 @@ def handle_compliant_instance(
                 "CLEANUP_TAG_FAILED",
                 instance_id=instance_id,
                 level=logging.WARNING,
-                previous_status=active_request.get("status") if active_request else None,
+                previous_status=(
+                    active_request.get("status") if active_request else None
+                ),
                 reason=REASON_FAILED_TO_REMOVE_PATCH_INSTALL_APPROVAL_TAG,
                 extra={"error": str(error)},
             )
@@ -310,9 +313,13 @@ def handle_missing_install_window(
     active_request: dict[str, Any] | None,
 ) -> None:
     """Move the request to manual handling when the install window tag is missing."""
-    latest_request = active_request or fetch_latest_request(account_id, base_fields["region"], instance_id)
+    latest_request = active_request or fetch_latest_request(
+        account_id, base_fields["region"], instance_id
+    )
     if latest_request and latest_request.get("status") == STATUS_MANUAL:
-        update_request(latest_request, {"status": STATUS_MANUAL, **base_fields}, ACTIVE_STATUSES)
+        update_request(
+            latest_request, {"status": STATUS_MANUAL, **base_fields}, ACTIVE_STATUSES
+        )
         log_instance_action(
             "REFRESH_REQUEST",
             instance_id=instance_id,
@@ -342,7 +349,12 @@ def handle_missing_install_window(
         )
         return
 
-    put_new_request(status=STATUS_MANUAL, fields=base_fields, now=now, active_statuses=ACTIVE_STATUSES)
+    put_new_request(
+        status=STATUS_MANUAL,
+        fields=base_fields,
+        now=now,
+        active_statuses=ACTIVE_STATUSES,
+    )
     log_instance_action(
         "CREATE_REQUEST",
         instance_id=instance_id,
@@ -358,7 +370,12 @@ def create_pending_approval_request(
     base_fields: dict[str, Any],
 ) -> None:
     """Create the first approval request for a newly discovered non-compliant instance."""
-    put_new_request(status=STATUS_PENDING_APPROVAL, fields=base_fields, now=now, active_statuses=ACTIVE_STATUSES)
+    put_new_request(
+        status=STATUS_PENDING_APPROVAL,
+        fields=base_fields,
+        now=now,
+        active_statuses=ACTIVE_STATUSES,
+    )
     log_instance_action(
         "CREATE_REQUEST",
         instance_id=instance_id,
@@ -455,7 +472,9 @@ def handle_ready_for_install_request(
 ) -> None:
     """Wait for the expected install window or fail the request if remediation did not clear compliance."""
     status = active_request["status"]
-    expected_install_window_at = parse_timestamp(active_request.get("expected_install_window_at"))
+    expected_install_window_at = parse_timestamp(
+        active_request.get("expected_install_window_at")
+    )
     install_grace_until = parse_timestamp(active_request.get("install_grace_until"))
 
     if expected_install_window_at and now < expected_install_window_at:
@@ -470,7 +489,11 @@ def handle_ready_for_install_request(
             level=logging.DEBUG,
             previous_status=status,
             reason=REASON_INSTALL_WINDOW_NOT_REACHED,
-            extra={"expected_install_window_at": active_request.get("expected_install_window_at")},
+            extra={
+                "expected_install_window_at": active_request.get(
+                    "expected_install_window_at"
+                )
+            },
         )
         return
 
@@ -526,7 +549,9 @@ def build_request_metadata(
         "owner": instance_data.get("owner"),
         "environment": instance_data.get("environment"),
         "patch_install_window": instance_data.get("patch_install_window"),
-        "patch_install_window_description": instance_data.get("patch_install_window_description"),
+        "patch_install_window_description": instance_data.get(
+            "patch_install_window_description"
+        ),
         "next_install_window_at": instance_data.get("next_install_window_at"),
         "updated_at": isoformat(now),
     }
@@ -562,7 +587,9 @@ def parse_timestamp(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def compute_install_grace_until(expected_install_window_at: str | None, approved_for_install_at: datetime) -> str:
+def compute_install_grace_until(
+    expected_install_window_at: str | None, approved_for_install_at: datetime
+) -> str:
     """Compute the grace deadline using the expected window when available, otherwise approval time."""
     expected_at = parse_timestamp(expected_install_window_at)
     if expected_at is None:

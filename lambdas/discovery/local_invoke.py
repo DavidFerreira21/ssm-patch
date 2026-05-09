@@ -3,7 +3,6 @@ import logging
 import os
 from pathlib import Path
 
-
 DEFAULT_ENV = {
     "AWS_REGION": "us-east-1",
     "DDB_TABLE_NAME": "ddb-us-east-1-564606314242-dev",
@@ -18,10 +17,14 @@ DEFAULT_ENV = {
     "POSTPONE_DAYS": "6",
     "MAX_POSTPONES": "1",
 }
+
+
 class FakeContext:
     function_name = "manual-discovery-invoke"
     aws_request_id = "manual-discovery-request"
-    invoked_function_arn = "arn:aws:lambda:local:manual:function:manual-discovery-invoke"
+    invoked_function_arn = (
+        "arn:aws:lambda:local:manual:function:manual-discovery-invoke"
+    )
     memory_limit_in_mb = 512
 
 

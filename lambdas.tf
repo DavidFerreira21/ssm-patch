@@ -262,9 +262,9 @@ resource "aws_cloudwatch_log_group" "executor" {
   tags = local.common_tags
 }
 
-###########################################
+##########################################
 # Lambda Functions
-###########################################
+##########################################
 
 resource "aws_lambda_function" "discovery" {
   count            = local.enabled ? 1 : 0

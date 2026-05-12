@@ -34,8 +34,11 @@ def summarize_metadata_changes(
     summary: list[str] = []
     tracked_fields = (
         "hostname",
-        "owner",
         "environment",
+        "patch_severity",
+        "critical_missing_count",
+        "security_missing_count",
+        "other_missing_count",
         "patch_install_window",
         "patch_install_window_description",
         "next_install_window_at",
@@ -121,7 +124,7 @@ def put_new_request(
     fields: dict[str, Any],
     now: datetime,
     active_statuses: tuple[str, ...],
-) -> None:
+) -> dict[str, Any]:
     """Insert a brand-new request row into DynamoDB with its initial workflow state."""
     request_id = str(uuid.uuid4())
     timestamp = isoformat(now)
@@ -150,6 +153,7 @@ def put_new_request(
         fields["instance_id"],
         status,
     )
+    return item
 
 
 def update_request(
@@ -231,8 +235,8 @@ def apply_active_index_fields(
         )
         return
 
-    item["gsi1pk"] = None
-    item["gsi1sk"] = None
+    item.pop("gsi1pk", None)
+    item.pop("gsi1sk", None)
 
 
 def build_pk(account_id: str, region: str, instance_id: str) -> str:

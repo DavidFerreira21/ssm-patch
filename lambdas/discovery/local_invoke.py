@@ -12,6 +12,7 @@ DEFAULT_ENV = {
     "PATCH_INSTALL_WINDOW_TAG_KEY": "PatchInstallWindow",
     "PATCH_INSTALL_APPROVED_TAG_KEY": "PatchInstallApproved",
     "PATCH_INSTALL_APPROVED_TAG_VALUE": "true",
+    "TEAMS_WEBHOOK_SECRET_ARN": "arn:aws:secretsmanager:us-east-1:564606314242:secret:discovery-teams-webhook-us-east-1-564606314242-dev",
     "INSTALL_GRACE_HOURS": "8",
     "RETENTION_DAYS": "60",
     "POSTPONE_DAYS": "6",

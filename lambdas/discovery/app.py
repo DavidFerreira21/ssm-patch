@@ -8,6 +8,10 @@ import boto3
 from botocore.exceptions import ClientError
 
 from discovery_dynamodb import fetch_active_requests
+from discovery_notifications import (
+    TeamsNotificationError,
+    send_install_request_notification,
+)
 from discovery_workflow import ACTIVE_STATUSES, log_instance_action, process_instance
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -23,6 +27,8 @@ PATCH_INSTALL_APPROVED_TAG_VALUE = os.environ["PATCH_INSTALL_APPROVED_TAG_VALUE"
 ssm_client = boto3.client("ssm")
 ec2_client = boto3.client("ec2")
 sts_client = boto3.client("sts")
+
+MAX_ERROR_INSTANCES = 50
 
 
 ###########################################
@@ -45,6 +51,72 @@ def chunks(items: list[str], size: int):
         yield batch
 
 
+def build_error_instance(
+    *,
+    account_id: str,
+    instance_id: str,
+    reason: str,
+    previous_status: str | None = None,
+) -> dict[str, Any]:
+    """Build a summarized error item for Dynatrace-friendly lambda returns."""
+    item: dict[str, Any] = {
+        "account_id": account_id,
+        "instance_id": instance_id,
+        "reason": reason,
+    }
+    if previous_status:
+        item["previous_status"] = previous_status
+    return item
+
+
+def append_error_instance(
+    error_instances: list[dict[str, Any]],
+    *,
+    account_id: str,
+    instance_id: str,
+    reason: str,
+    previous_status: str | None = None,
+) -> bool:
+    """Append one summarized error item and report whether the list had to be truncated."""
+    if len(error_instances) >= MAX_ERROR_INSTANCES:
+        return True
+    error_instances.append(
+        build_error_instance(
+            account_id=account_id,
+            instance_id=instance_id,
+            reason=reason,
+            previous_status=previous_status,
+        )
+    )
+    return False
+
+
+def build_lambda_result(
+    *,
+    status_code: int,
+    status_reason: str,
+    request_id: str,
+    function_name: str,
+    region: str,
+    account_id: str,
+    result: dict[str, Any],
+    error_instances: list[dict[str, Any]],
+    error_instances_truncated: bool,
+) -> dict[str, Any]:
+    """Build the standardized lambda return payload used by Dynatrace."""
+    return {
+        "status_code": status_code,
+        "status_reason": status_reason,
+        "request_id": request_id,
+        "function_name": function_name,
+        "region": region,
+        "account_id": account_id,
+        **result,
+        "error_instances": error_instances,
+        "error_instances_truncated": error_instances_truncated,
+    }
+
+
 ###########################################
 # Lambda Handler
 ###########################################
@@ -52,83 +124,175 @@ def chunks(items: list[str], size: int):
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Run the discovery cycle for the current region and process each tracked instance."""
-    account_id = sts_client.get_caller_identity()["Account"]
     region = os.environ["AWS_REGION"]
     now = utc_now()
     request_id = getattr(context, "aws_request_id", "unknown")
-
-    LOGGER.info(
-        "discovery started request_id=%s account_id=%s region=%s",
-        request_id,
-        account_id,
-        region,
-    )
-    LOGGER.debug("discovery event=%s", event)
+    function_name = getattr(context, "function_name", "discovery")
 
     try:
-        discovered_instance_ids = fetch_non_compliant_instance_ids()
-    except ClientError:
-        LOGGER.exception("failed to fetch non-compliant instances region=%s", region)
-        discovered_instance_ids = set()
+        account_id = sts_client.get_caller_identity()["Account"]
+        error_instances: list[dict[str, Any]] = []
+        error_instances_truncated = False
+        degraded = False
 
-    try:
-        active_requests = fetch_active_requests(region, ACTIVE_STATUSES)
-    except ClientError:
-        LOGGER.exception("failed to fetch active requests region=%s", region)
-        active_requests = {}
+        LOGGER.info(
+            "discovery started request_id=%s account_id=%s region=%s",
+            request_id,
+            account_id,
+            region,
+        )
+        LOGGER.debug("discovery event=%s", event)
 
-    tracked_instance_ids = sorted(discovered_instance_ids | set(active_requests.keys()))
-    LOGGER.info(
-        "discovery scope non_compliant_instances=%s active_requests=%s tracked_instances=%s",
-        len(discovered_instance_ids),
-        len(active_requests),
-        len(tracked_instance_ids),
-    )
-
-    instance_details = fetch_instance_details(tracked_instance_ids)
-    try:
-        enrich_instance_details_with_install_windows(instance_details)
-    except ClientError:
-        LOGGER.exception("failed to enrich install window metadata region=%s", region)
-
-    processed = 0
-    failed = 0
-    for instance_id in tracked_instance_ids:
         try:
-            process_instance(
-                account_id=account_id,
-                region=region,
-                instance_id=instance_id,
-                now=now,
-                is_non_compliant=instance_id in discovered_instance_ids,
-                instance_data=instance_details.get(instance_id),
-                active_request=active_requests.get(instance_id),
-            )
-            processed += 1
-        except Exception:
-            failed += 1
-            LOGGER.exception(
-                "failed to process instance instance_id=%s account_id=%s region=%s",
-                instance_id,
-                account_id,
-                region,
-            )
-            log_instance_action(
-                "INSTANCE_PROCESSING_FAILED",
-                instance_id=instance_id,
-                level=logging.ERROR,
-                previous_status=active_requests.get(instance_id, {}).get("status"),
-                reason="UNHANDLED_EXCEPTION",
-            )
+            discovered_instance_ids = fetch_non_compliant_instance_ids()
+        except ClientError:
+            LOGGER.exception("failed to fetch non-compliant instances region=%s", region)
+            discovered_instance_ids = set()
+            degraded = True
 
-    result = {
-        "processed_instances": processed,
-        "failed_instances": failed,
-        "non_compliant_instances": len(discovered_instance_ids),
-        "tracked_active_requests": len(active_requests),
-    }
-    LOGGER.info("discovery finished result=%s", result)
-    return result
+        try:
+            active_requests = fetch_active_requests(region, ACTIVE_STATUSES)
+        except ClientError:
+            LOGGER.exception("failed to fetch active requests region=%s", region)
+            active_requests = {}
+            degraded = True
+
+        tracked_instance_ids = sorted(discovered_instance_ids | set(active_requests.keys()))
+        LOGGER.info(
+            "discovery scope non_compliant_instances=%s active_requests=%s tracked_instances=%s",
+            len(discovered_instance_ids),
+            len(active_requests),
+            len(tracked_instance_ids),
+        )
+
+        instance_details = fetch_instance_details(tracked_instance_ids)
+        try:
+            enrich_instance_details_with_patch_states(instance_details)
+        except ClientError:
+            LOGGER.exception(
+                "failed to enrich patch severity metadata region=%s", region
+            )
+            degraded = True
+        try:
+            enrich_instance_details_with_install_windows(instance_details)
+        except ClientError:
+            LOGGER.exception("failed to enrich install window metadata region=%s", region)
+            degraded = True
+
+        processed = 0
+        failed = 0
+        for instance_id in tracked_instance_ids:
+            try:
+                notification_request = process_instance(
+                    account_id=account_id,
+                    region=region,
+                    instance_id=instance_id,
+                    now=now,
+                    is_non_compliant=instance_id in discovered_instance_ids,
+                    instance_data=instance_details.get(instance_id),
+                    active_request=active_requests.get(instance_id),
+                )
+                if notification_request:
+                    try:
+                        send_install_request_notification(notification_request)
+                    except TeamsNotificationError as error:
+                        degraded = True
+                        LOGGER.warning(
+                            "failed to send teams notification request_id=%s account_id=%s instance_id=%s reason=%s detail=%s",
+                            notification_request.get("request_id"),
+                            notification_request.get("account_id"),
+                            notification_request.get("instance_id"),
+                            error.reason,
+                            error.detail,
+                        )
+                        error_instances_truncated = append_error_instance(
+                            error_instances,
+                            account_id=notification_request.get(
+                                "account_id", account_id
+                            ),
+                            instance_id=notification_request.get(
+                                "instance_id", instance_id
+                            ),
+                            reason=error.reason,
+                        ) or error_instances_truncated
+                processed += 1
+            except Exception:
+                failed += 1
+                LOGGER.exception(
+                    "failed to process instance instance_id=%s account_id=%s region=%s",
+                    instance_id,
+                    account_id,
+                    region,
+                )
+                previous_status = active_requests.get(instance_id, {}).get("status")
+                log_instance_action(
+                    "INSTANCE_PROCESSING_FAILED",
+                    instance_id=instance_id,
+                    level=logging.ERROR,
+                    previous_status=previous_status,
+                    reason="UNHANDLED_EXCEPTION",
+                )
+                error_instances_truncated = append_error_instance(
+                    error_instances,
+                    account_id=account_id,
+                    instance_id=instance_id,
+                    reason="UNHANDLED_EXCEPTION",
+                    previous_status=previous_status,
+                ) or error_instances_truncated
+
+        result = {
+            "processed_instances": processed,
+            "failed_instances": failed,
+            "non_compliant_instances": len(discovered_instance_ids),
+            "tracked_active_requests": len(active_requests),
+        }
+        status_code = 207 if degraded or failed > 0 else 200
+        status_reason = (
+            "DISCOVERY_PARTIAL_FAILURE" if status_code == 207 else "DISCOVERY_SUCCESS"
+        )
+        payload = build_lambda_result(
+            status_code=status_code,
+            status_reason=status_reason,
+            request_id=request_id,
+            function_name=function_name,
+            region=region,
+            account_id=account_id,
+            result=result,
+            error_instances=error_instances,
+            error_instances_truncated=error_instances_truncated,
+        )
+        LOGGER.info(
+            "discovery finished account_id=%s status_code=%s status_reason=%s error_instances=%s result=%s",
+            account_id,
+            status_code,
+            status_reason,
+            len(error_instances),
+            result,
+        )
+        return payload
+    except Exception:
+        LOGGER.exception(
+            "discovery failed globally request_id=%s function_name=%s region=%s",
+            request_id,
+            function_name,
+            region,
+        )
+        return build_lambda_result(
+            status_code=500,
+            status_reason="DISCOVERY_GLOBAL_FAILURE",
+            request_id=request_id,
+            function_name=function_name,
+            region=region,
+            account_id="unknown",
+            result={
+                "processed_instances": 0,
+                "failed_instances": 0,
+                "non_compliant_instances": 0,
+                "tracked_active_requests": 0,
+            },
+            error_instances=[],
+            error_instances_truncated=False,
+        )
 
 
 ###########################################
@@ -201,7 +365,10 @@ def fetch_instance_details(instance_ids: list[str]) -> dict[str, dict[str, Any]]
 
         for reservation in response.get("Reservations", []):
             for instance in reservation.get("Instances", []):
-                tags = {tag["Key"]: tag["Value"] for tag in instance.get("Tags", [])}
+                tags = {
+                    tag["Key"]: normalize_tag_value(tag.get("Value"))
+                    for tag in instance.get("Tags", [])
+                }
                 instance_id = instance["InstanceId"]
                 details[instance_id] = {
                     "instance_id": instance_id,
@@ -210,6 +377,10 @@ def fetch_instance_details(instance_ids: list[str]) -> dict[str, dict[str, Any]]
                     or instance_id,
                     "owner": tags.get("Owner"),
                     "environment": tags.get("Environment"),
+                    "patch_severity": None,
+                    "critical_missing_count": 0,
+                    "security_missing_count": 0,
+                    "other_missing_count": 0,
                     "patch_management_enabled": tags.get(PATCH_MANAGEMENT_TAG_KEY)
                     == PATCH_MANAGEMENT_TAG_VALUE,
                     "patch_install_window": tags.get(PATCH_INSTALL_WINDOW_TAG_KEY),
@@ -226,6 +397,115 @@ def fetch_instance_details(instance_ids: list[str]) -> dict[str, dict[str, Any]]
         len(instance_ids),
     )
     return details
+
+
+def normalize_tag_value(value: str | None) -> str | None:
+    """Convert empty tag values into None so DynamoDB items never receive empty strings."""
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def enrich_instance_details_with_patch_states(
+    instance_details: dict[str, dict[str, Any]],
+) -> None:
+    """Populate patch severity summary fields for each tracked instance using SSM patch states."""
+    if not instance_details:
+        return
+
+    instance_ids = list(instance_details.keys())
+    for batch in chunks(instance_ids, 50):
+        response = ssm_client.describe_instance_patch_states(InstanceIds=batch)
+        for patch_state in response.get("InstancePatchStates", []):
+            instance_id = patch_state.get("InstanceId")
+            if not instance_id or instance_id not in instance_details:
+                continue
+
+            critical_count = int(patch_state.get("CriticalNonCompliantCount", 0) or 0)
+            security_count = int(patch_state.get("SecurityNonCompliantCount", 0) or 0)
+            missing_count = int(patch_state.get("MissingCount", 0) or 0)
+            other_count = max(missing_count - critical_count - security_count, 0)
+
+            instance_details[instance_id].update(
+                {
+                    "critical_missing_count": critical_count,
+                    "security_missing_count": security_count,
+                    "other_missing_count": other_count,
+                }
+            )
+
+    for instance_id, details in instance_details.items():
+        details["patch_severity"] = fetch_highest_missing_patch_severity(instance_id)
+
+
+def fetch_highest_missing_patch_severity(instance_id: str) -> str | None:
+    """Return the highest normalized severity among missing patches reported by SSM."""
+    highest_rank = -1
+    highest_severity = None
+    next_token = None
+
+    while True:
+        request: dict[str, Any] = {
+            "InstanceId": instance_id,
+            "Filters": [{"Key": "State", "Values": ["Missing"]}],
+            "MaxResults": 50,
+        }
+        if next_token:
+            request["NextToken"] = next_token
+
+        response = ssm_client.describe_instance_patches(**request)
+        for patch in response.get("Patches", []):
+            severity = normalize_patch_severity(patch.get("Severity"))
+            rank = patch_severity_rank(severity)
+            if rank > highest_rank:
+                highest_rank = rank
+                highest_severity = severity
+
+        next_token = response.get("NextToken")
+        if not next_token:
+            break
+
+    return highest_severity
+
+
+def normalize_patch_severity(value: str | None) -> str | None:
+    """Normalize AWS patch severity labels into a smaller operational severity set."""
+    if not value:
+        return None
+
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+
+    mapping = {
+        "critical": "Critical",
+        "important": "High",
+        "high": "High",
+        "medium": "Moderate",
+        "moderate": "Moderate",
+        "low": "Low",
+        "informational": "Informational",
+        "info": "Informational",
+        "unspecified": "Unspecified",
+    }
+    return mapping.get(normalized, value.strip())
+
+
+def patch_severity_rank(severity: str | None) -> int:
+    """Rank normalized severities so the highest missing patch severity can be selected."""
+    if severity is None:
+        return -1
+
+    ranking = {
+        "Critical": 5,
+        "High": 4,
+        "Moderate": 3,
+        "Low": 2,
+        "Informational": 1,
+        "Unspecified": 0,
+    }
+    return ranking.get(severity, 0)
 
 
 ###########################################

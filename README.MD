@@ -9,6 +9,7 @@ O fluxo usa:
 - SSM Maintenance Window de `scan`
 - SSM Compliance como fonte de verdade para `NON_COMPLIANT`
 - Lambda `discovery`
+- Secret no AWS Secrets Manager com o Teams webhook do `discovery`
 - DynamoDB + DynamoDB Streams
 - Lambda `executor`
 - SSM Maintenance Window de `install`
@@ -38,6 +39,7 @@ Tag dinâmica:
    - valida PatchManagement=true
    - valida PatchInstallWindow
    - cria ou reconcilia request no DynamoDB
+   - envia uma notificação por servidor para o Teams quando cria uma nova request `PENDING_APPROVAL` ou `MANUAL`
 5. Usuário ou integração altera a request:
    - APPROVED
    - POSTPONED
@@ -125,6 +127,7 @@ Tag dinâmica:
 Ativos:
 
 - `PENDING_APPROVAL`
+- `MANUAL`
 - `POSTPONED`
 - `APPROVED`
 - `AUTO_APPROVED`
@@ -134,7 +137,6 @@ Ativos:
 Finais:
 
 - `RESOLVED`
-- `MANUAL`
 - `INSTANCE_NOT_FOUND`
 - `FAILED_CONFIGURATION`
 - `FAILED_REMEDIATION`
@@ -156,6 +158,7 @@ Arquivos principais:
 - DynamoDB para requests
 - Lambda `discovery`
 - Lambda `executor`
+- Secret do Teams para a Lambda `discovery`
 - EventBridge schedule para `discovery`
 - DynamoDB Stream mapping para `executor`
 - SSM Maintenance Window de `scan`
@@ -175,8 +178,11 @@ sk = INSTALL#<timestamp>#<request_id>
 O item guarda histórico por instância e região, além de metadata como:
 
 - `hostname`
-- `owner`
 - `environment`
+- `patch_severity`
+- `critical_missing_count`
+- `security_missing_count`
+- `other_missing_count`
 - `patch_install_window`
 - `patch_install_window_description`
 - `next_install_window_at`
@@ -185,6 +191,34 @@ O item guarda histórico por instância e região, além de metadata como:
 - `status`
 - `postpone_count`
 - `postponed_until`
+
+Observação:
+
+- `patch_severity` representa a maior severidade encontrada entre os patches atualmente em estado `Missing` para a instância
+
+## Notificações do Teams
+
+- a stack cria um secret vazio no AWS Secrets Manager para o webhook do Microsoft Teams usado pela Lambda `discovery`
+- o valor do webhook deve ser preenchido manualmente fora do módulo
+- o `discovery` envia uma notificação por servidor quando:
+  - cria uma nova request `PENDING_APPROVAL`
+  - cria uma nova request `MANUAL` por ausência de `PatchInstallWindow`
+- a mensagem é enviada como `MessageCard` e inclui:
+  - `request_id`
+  - `status`
+  - `account_id`
+  - `region`
+  - `instance_id`
+  - `hostname`
+  - `environment`
+- `patch_severity`
+  - `critical_missing_count`
+  - `security_missing_count`
+  - `other_missing_count`
+  - `patch_install_window`
+  - `patch_install_window_description`
+  - `next_install_window_at`
+  - `created_at`
 
 ## Deploy
 
@@ -236,8 +270,7 @@ Comandos locais úteis:
 
 ```powershell
 bandit -r .\lambdas
-checkov -d .
-trivy fs --scanners vuln,misconfig,secret .
+trivy config .
 ```
 
 ## GitHub Actions

@@ -89,7 +89,7 @@ def process_instance(
     is_non_compliant: bool,
     instance_data: dict[str, Any] | None,
     active_request: dict[str, Any] | None,
-) -> None:
+) -> dict[str, Any] | None:
     """Route one instance through the discovery decision tree based on compliance and approval state."""
     log_instance_action(
         "EVALUATE",
@@ -109,14 +109,14 @@ def process_instance(
             now=now,
             active_request=active_request,
         )
-        return
+        return None
 
     if not instance_data["patch_management_enabled"]:
         handle_patch_management_disabled(
             instance_id=instance_id,
             active_request=active_request,
         )
-        return
+        return None
 
     base_fields = build_request_metadata(
         account_id=account_id,
@@ -127,33 +127,42 @@ def process_instance(
 
     if not is_non_compliant:
         handle_compliant_instance(
+            account_id=account_id,
+            region=region,
             instance_id=instance_id,
             now=now,
             base_fields=base_fields,
             instance_data=instance_data,
             active_request=active_request,
         )
-        return
+        return None
 
     if not instance_data["patch_install_window"]:
-        handle_missing_install_window(
+        return handle_missing_install_window(
             account_id=account_id,
             instance_id=instance_id,
             now=now,
             base_fields=base_fields,
             active_request=active_request,
         )
-        return
 
     if not active_request:
-        create_pending_approval_request(
+        return create_pending_approval_request(
             instance_id=instance_id,
             now=now,
             base_fields=base_fields,
         )
-        return
 
     status = active_request["status"]
+    if status == STATUS_MANUAL:
+        handle_manual_request(
+            instance_id=instance_id,
+            now=now,
+            base_fields=base_fields,
+            active_request=active_request,
+        )
+        return None
+
     if status == STATUS_POSTPONED:
         handle_postponed_request(
             instance_id=instance_id,
@@ -161,7 +170,7 @@ def process_instance(
             base_fields=base_fields,
             active_request=active_request,
         )
-        return
+        return None
 
     if status in {STATUS_INSTALL_READY, STATUS_AUTO_INSTALL_READY}:
         handle_ready_for_install_request(
@@ -170,7 +179,7 @@ def process_instance(
             base_fields=base_fields,
             active_request=active_request,
         )
-        return
+        return None
 
     if status in REFRESHABLE_ACTIVE_STATUSES:
         refresh_active_request(
@@ -178,7 +187,7 @@ def process_instance(
             base_fields=base_fields,
             active_request=active_request,
         )
-        return
+        return None
 
     log_instance_action(
         "SKIP",
@@ -186,10 +195,13 @@ def process_instance(
         previous_status=status,
         reason=REASON_UNSUPPORTED_ACTIVE_STATUS,
     )
+    return None
 
 
 def handle_compliant_instance(
     *,
+    account_id: str,
+    region: str,
     instance_id: str,
     now: datetime,
     base_fields: dict[str, Any],
@@ -226,7 +238,13 @@ def handle_compliant_instance(
             )
             return
 
-    if not active_request:
+    request_to_resolve = active_request
+    if request_to_resolve is None:
+        latest_request = fetch_latest_request(account_id, region, instance_id)
+        if latest_request and latest_request.get("status") == STATUS_MANUAL:
+            request_to_resolve = latest_request
+
+    if not request_to_resolve:
         log_instance_action(
             "SKIP",
             instance_id=instance_id,
@@ -236,7 +254,7 @@ def handle_compliant_instance(
         return
 
     update_request(
-        active_request,
+        request_to_resolve,
         {
             **base_fields,
             "status": STATUS_RESOLVED,
@@ -248,7 +266,7 @@ def handle_compliant_instance(
     log_instance_action(
         "RESOLVE_REQUEST",
         instance_id=instance_id,
-        previous_status=active_request.get("status"),
+        previous_status=request_to_resolve.get("status"),
         next_status=STATUS_RESOLVED,
         reason=REASON_INSTANCE_COMPLIANT,
     )
@@ -311,7 +329,7 @@ def handle_missing_install_window(
     now: datetime,
     base_fields: dict[str, Any],
     active_request: dict[str, Any] | None,
-) -> None:
+) -> dict[str, Any] | None:
     """Move the request to manual handling when the install window tag is missing."""
     latest_request = active_request or fetch_latest_request(
         account_id, base_fields["region"], instance_id
@@ -327,7 +345,7 @@ def handle_missing_install_window(
             next_status=STATUS_MANUAL,
             reason=REASON_STATUS_UNCHANGED_METADATA_REFRESH,
         )
-        return
+        return None
 
     if latest_request and latest_request.get("status") in ACTIVE_STATUSES:
         update_request(
@@ -347,9 +365,9 @@ def handle_missing_install_window(
             next_status=STATUS_MANUAL,
             reason=REASON_MISSING_PATCH_INSTALL_WINDOW,
         )
-        return
+        return None
 
-    put_new_request(
+    created_request = put_new_request(
         status=STATUS_MANUAL,
         fields=base_fields,
         now=now,
@@ -361,6 +379,34 @@ def handle_missing_install_window(
         next_status=STATUS_MANUAL,
         reason=REASON_MISSING_PATCH_INSTALL_WINDOW,
     )
+    return created_request
+
+
+def handle_manual_request(
+    *,
+    instance_id: str,
+    now: datetime,
+    base_fields: dict[str, Any],
+    active_request: dict[str, Any],
+) -> None:
+    """Return a manual request to the standard approval flow once the install window tag is restored."""
+    update_request(
+        active_request,
+        {
+            **base_fields,
+            "status": STATUS_PENDING_APPROVAL,
+            "resolution_reason": None,
+            "updated_at": isoformat(now),
+        },
+        ACTIVE_STATUSES,
+    )
+    log_instance_action(
+        "UPDATE_REQUEST",
+        instance_id=instance_id,
+        previous_status=STATUS_MANUAL,
+        next_status=STATUS_PENDING_APPROVAL,
+        reason=REASON_NON_COMPLIANT_REQUIRES_INSTALL_APPROVAL,
+    )
 
 
 def create_pending_approval_request(
@@ -368,9 +414,9 @@ def create_pending_approval_request(
     instance_id: str,
     now: datetime,
     base_fields: dict[str, Any],
-) -> None:
+) -> dict[str, Any]:
     """Create the first approval request for a newly discovered non-compliant instance."""
-    put_new_request(
+    created_request = put_new_request(
         status=STATUS_PENDING_APPROVAL,
         fields=base_fields,
         now=now,
@@ -382,6 +428,7 @@ def create_pending_approval_request(
         next_status=STATUS_PENDING_APPROVAL,
         reason=REASON_NON_COMPLIANT_REQUIRES_INSTALL_APPROVAL,
     )
+    return created_request
 
 
 def handle_postponed_request(
@@ -548,6 +595,10 @@ def build_request_metadata(
         "hostname": instance_data["hostname"],
         "owner": instance_data.get("owner"),
         "environment": instance_data.get("environment"),
+        "patch_severity": instance_data.get("patch_severity"),
+        "critical_missing_count": instance_data.get("critical_missing_count", 0),
+        "security_missing_count": instance_data.get("security_missing_count", 0),
+        "other_missing_count": instance_data.get("other_missing_count", 0),
         "patch_install_window": instance_data.get("patch_install_window"),
         "patch_install_window_description": instance_data.get(
             "patch_install_window_description"

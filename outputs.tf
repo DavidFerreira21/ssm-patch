@@ -14,6 +14,16 @@ output "discovery_lambda_name" {
   value = try(aws_lambda_function.discovery[0].function_name, null)
 }
 
+output "discovery_teams_webhook_secret_arn" {
+  description = "ARN of the Secrets Manager secret that stores the Microsoft Teams webhook used by the discovery lambda."
+  value       = try(aws_secretsmanager_secret.discovery_teams_webhook[0].arn, null)
+}
+
+output "discovery_teams_webhook_secret_name" {
+  description = "Name of the Secrets Manager secret that stores the Microsoft Teams webhook used by the discovery lambda."
+  value       = try(aws_secretsmanager_secret.discovery_teams_webhook[0].name, null)
+}
+
 output "executor_lambda_name" {
   value = try(aws_lambda_function.executor[0].function_name, null)
 }

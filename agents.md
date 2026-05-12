@@ -8,6 +8,7 @@ A automação usa:
 
 - DynamoDB para estado das requests
 - Lambda `discovery` para descobrir e reconciliar requests
+- Secret no AWS Secrets Manager com o Teams webhook do `discovery`
 - Lambda `executor` para reagir a requests aprovadas
 - DynamoDB Streams para acionar o `executor`
 - EventBridge para rodar o `discovery`
@@ -50,8 +51,10 @@ Lambda Discovery
     +--> se PatchManagement != true -> ignora
     |
     +--> se faltar PatchInstallWindow -> MANUAL
+    |    +--> se criar nova request MANUAL -> notifica Teams
     |
     +--> se não existir request ativa -> cria PENDING_APPROVAL
+    |    +--> notifica Teams
     |
     +--> se POSTPONED ainda vigente -> mantém
     |
@@ -116,6 +119,7 @@ Lambda Discovery em ciclos seguintes
 Ativos:
 
 - `PENDING_APPROVAL`
+- `MANUAL`
 - `POSTPONED`
 - `APPROVED`
 - `AUTO_APPROVED`
@@ -125,7 +129,6 @@ Ativos:
 Finais / fora do fluxo ativo:
 
 - `RESOLVED`
-- `MANUAL`
 - `INSTANCE_NOT_FOUND`
 - `FAILED_CONFIGURATION`
 - `FAILED_REMEDIATION`
@@ -176,7 +179,13 @@ O `discovery`:
    - `patch_install_window`
    - `patch_install_window_description`
    - `next_install_window_at`
-5. Cria, atualiza, resolve ou coloca requests em `MANUAL`.
+5. Enriquece criticidade de patch:
+   - `patch_severity`
+   - `critical_missing_count`
+   - `security_missing_count`
+   - `other_missing_count`
+6. Cria, atualiza, resolve ou coloca requests em `MANUAL`.
+7. Envia notificação do Teams quando cria nova request `PENDING_APPROVAL` ou nova request `MANUAL`.
 
 Regras principais:
 
@@ -184,11 +193,19 @@ Regras principais:
   - ignora
 - Se faltar `PatchInstallWindow`:
   - vai para `MANUAL`
+- Se a instância estiver em `MANUAL` e a tag `PatchInstallWindow` voltar:
+  - retorna para `PENDING_APPROVAL`
 - Se a instância estiver `COMPLIANT`:
   - resolve a request ativa
   - remove `PatchInstallApproved` se a tag ainda estiver presente
 - Se não existir request ativa:
   - cria `PENDING_APPROVAL`
+- Notificação do Teams:
+  - usa webhook armazenado em secret do AWS Secrets Manager
+  - o secret é criado vazio pelo Terraform
+  - o valor do webhook precisa ser preenchido manualmente depois
+  - dispara apenas em nova request `PENDING_APPROVAL`
+  - dispara também em nova request `MANUAL`
 - Se estiver `POSTPONED`:
   - espera ou muda para `AUTO_APPROVED`
 - Se estiver ativa em estado refreshable:

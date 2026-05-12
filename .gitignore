@@ -23,3 +23,5 @@ security-reports/
 
 .DS_Store
 Thumbs.db
+*.onetoc2
+*.one

@@ -36,6 +36,7 @@ resource "aws_iam_role_policy" "discovery_lambda" {
           Effect = "Allow"
           Action = [
             "ssm:DescribeInstanceInformation",
+            "ssm:DescribeInstancePatches",
             "ssm:DescribeInstancePatchStates",
             "ssm:DescribeMaintenanceWindows",
             "ssm:ListResourceComplianceSummaries"
@@ -76,6 +77,14 @@ resource "aws_iam_role_policy" "discovery_lambda" {
             local.dynamodb_table_arn,
             "${local.dynamodb_table_arn}/index/${one(aws_dynamodb_table.install_requests[0].global_secondary_index).name}"
           ]
+        },
+        {
+          Sid    = "SecretsManagerReadTeamsWebhook"
+          Effect = "Allow"
+          Action = [
+            "secretsmanager:GetSecretValue"
+          ]
+          Resource = aws_secretsmanager_secret.discovery_teams_webhook[0].arn
         },
         {
           Sid    = "StsIdentity"
@@ -286,6 +295,7 @@ resource "aws_lambda_function" "discovery" {
       PATCH_INSTALL_WINDOW_TAG_KEY     = var.patch_install_window_tag_key
       PATCH_INSTALL_APPROVED_TAG_KEY   = var.patch_install_approved_tag_key
       PATCH_INSTALL_APPROVED_TAG_VALUE = var.patch_install_approved_tag_value
+      TEAMS_WEBHOOK_SECRET_ARN         = aws_secretsmanager_secret.discovery_teams_webhook[0].arn
       INSTALL_GRACE_HOURS              = tostring(var.install_grace_hours)
       MAX_POSTPONES                    = tostring(var.max_postpones)
       POSTPONE_DAYS                    = tostring(var.postpone_days)

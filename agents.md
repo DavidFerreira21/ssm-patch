@@ -52,6 +52,7 @@ Lambda Discovery
     |
     +--> se faltar PatchInstallWindow -> MANUAL
     |    +--> se criar nova request MANUAL -> notifica Teams
+    |    +--> se depois PatchInstallWindow voltar -> PENDING_APPROVAL
     |
     +--> se não existir request ativa -> cria PENDING_APPROVAL
     |    +--> notifica Teams
@@ -104,6 +105,8 @@ SSM Install Window
 Lambda Discovery em ciclos seguintes
     |
     +--> se instância ficou COMPLIANT -> RESOLVED
+    |
+    +--> se estava MANUAL e PatchInstallWindow voltou -> PENDING_APPROVAL
     |
     +--> se instância ficou COMPLIANT e a tag dinâmica sobrou -> remove tag e RESOLVED
     |
@@ -206,6 +209,9 @@ Regras principais:
   - o valor do webhook precisa ser preenchido manualmente depois
   - dispara apenas em nova request `PENDING_APPROVAL`
   - dispara também em nova request `MANUAL`
+- `patch_severity`:
+  - representa a maior severidade encontrada entre os patches em estado `Missing`
+  - pode aparecer como `Critical`, `High`, `Moderate`, `Low`, `Informational` ou `Unspecified`
 - Se estiver `POSTPONED`:
   - espera ou muda para `AUTO_APPROVED`
 - Se estiver ativa em estado refreshable:

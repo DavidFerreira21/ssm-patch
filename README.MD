@@ -38,6 +38,7 @@ Tag dinâmica:
    - busca instâncias NON_COMPLIANT
    - valida PatchManagement=true
    - valida PatchInstallWindow
+   - enriquece criticidade de patch e janela de instalação
    - cria ou reconcilia request no DynamoDB
    - envia uma notificação por servidor para o Teams quando cria uma nova request `PENDING_APPROVAL` ou `MANUAL`
 5. Usuário ou integração altera a request:
@@ -58,6 +59,7 @@ Tag dinâmica:
    - remove PatchInstallApproved
 10. Discovery roda novamente:
    - se a instância ficou COMPLIANT, resolve a request
+   - se a instância estava em `MANUAL` e a tag `PatchInstallWindow` voltou, retorna para `PENDING_APPROVAL`
    - se a tag dinâmica sobrou, remove e resolve
    - se a janela esperada ainda não chegou, continua esperando
    - se a janela passou mas o grace ainda está ativo, continua esperando
@@ -195,6 +197,7 @@ O item guarda histórico por instância e região, além de metadata como:
 Observação:
 
 - `patch_severity` representa a maior severidade encontrada entre os patches atualmente em estado `Missing` para a instância
+- o valor é calculado a partir do detalhamento de patches e pode aparecer como `Critical`, `High`, `Moderate`, `Low`, `Informational` ou `Unspecified`
 
 ## Notificações do Teams
 
@@ -211,7 +214,7 @@ Observação:
   - `instance_id`
   - `hostname`
   - `environment`
-- `patch_severity`
+  - `patch_severity`
   - `critical_missing_count`
   - `security_missing_count`
   - `other_missing_count`
@@ -292,6 +295,7 @@ O repositório possui um workflow em [`.github/workflows/security.yml`](./.githu
 - O `executor` só marca a instância como aprovada para instalação.
 - A Maintenance Window de `install` executa a mudança real.
 - O `discovery` fecha o ciclo quando a instância volta a `COMPLIANT`.
+- `MANUAL` continua sendo status reconcilável e faz parte do conjunto de requests ativas.
 
 ## Roadmap
 
